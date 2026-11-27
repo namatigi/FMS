@@ -13,6 +13,7 @@ import { api } from '../api/endpoints';
 import Dashboard from '../pages/owner/Dashboard';
 import Login from '../pages/Login';
 import Compliance from '../pages/erb/Compliance';
+import { ProvinceStations } from '../pages/erb/Provinces';
 import App from '../App';
 
 const server = setupServer(...handlers);
@@ -101,5 +102,20 @@ describe('pages with MSW mocks', () => {
     // Copperbelt fixture has an offline station (Ndola)
     const offline = screen.getByRole('table', { name: 'Offline stations' });
     expect(within(offline).getByText('Copper Fuels Ndola Broadway')).toBeInTheDocument();
+  });
+
+  it('province stations link code and name to the station page', async () => {
+    await loginAs('erb@erb.local');
+    wrap(
+      <Routes>
+        <Route path="/erb/provinces/:id" element={<ProvinceStations />} />
+      </Routes>,
+      '/erb/provinces/2',
+    );
+    const table = await screen.findByRole('table', { name: 'Stations in Copperbelt' });
+    const code = within(table).getByRole('link', { name: 'COP-0002' });
+    const name = within(table).getByRole('link', { name: 'Copper Fuels Ndola Broadway' });
+    expect(code.getAttribute('href')).toMatch(/^\/stations\/[^/]+$/);
+    expect(name.getAttribute('href')).toBe(code.getAttribute('href'));
   });
 });

@@ -128,8 +128,8 @@ export function ProvinceStations() {
               rows={rows}
               rowKey={(r) => r.station_id}
               columns={[
-                { key: 'code', header: 'Code' },
-                { key: 'name', header: 'Station' },
+                { key: 'code', header: 'Code', render: (r) => <Link to={`/stations/${r.station_id}`}>{r.code}</Link> },
+                { key: 'name', header: 'Station', render: (r) => <Link to={`/stations/${r.station_id}`}>{r.name}</Link> },
                 { key: 'company_name', header: 'Company' },
                 { key: 'connectivity', header: 'Connectivity', render: (r) => <ConnectivityBadge value={r.connectivity} /> },
                 ...products.map((pc) => ({
