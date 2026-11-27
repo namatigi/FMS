@@ -1,4 +1,5 @@
 **
+!tsconfig.base.json
 !packages/shared/**
 !tools/pts-simulator/**
 **/node_modules

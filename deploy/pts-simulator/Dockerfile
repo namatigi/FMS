@@ -3,6 +3,7 @@
 # @fms/shared first because the simulator links it with file:../../packages/shared.
 FROM node:20-alpine
 WORKDIR /app
+COPY tsconfig.base.json ./
 COPY packages/shared packages/shared
 RUN cd packages/shared && (npm ci || npm install) && npm run build
 COPY tools/pts-simulator tools/pts-simulator

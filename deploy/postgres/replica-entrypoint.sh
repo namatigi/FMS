@@ -22,5 +22,10 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
   chmod 0700 "$PGDATA"
 fi
 
+# A hot standby must allow at least as many connections (and WAL senders /
+# replication slots) as the primary, or recovery aborts at start-up. Keep these
+# in step with the pg-primary command in docker-compose.yml.
 exec postgres -c hot_standby=on -c hot_standby_feedback=on \
-  -c max_standby_streaming_delay=30s -c shared_preload_libraries=pg_stat_statements
+  -c max_standby_streaming_delay=30s -c shared_preload_libraries=pg_stat_statements \
+  -c max_connections="${PG_MAX_CONNECTIONS:-300}" \
+  -c max_wal_senders=10 -c max_replication_slots=10
