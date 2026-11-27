@@ -298,6 +298,48 @@ const stationRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  app.get(
+    '/stations/:id/commands',
+    {
+      schema: {
+        tags: ['stations'],
+        summary: 'Commands sent to the station edge gateway (e.g. price updates) and their acknowledgement status',
+        params: idParam,
+        querystring: z.object({
+          status: z.enum(['queued', 'delivered', 'received', 'applied', 'partial', 'failed', 'expired', 'cancelled']).optional(),
+          limit: limitQ(50, 200),
+          cursor: z.string().optional(),
+        }),
+      },
+    },
+    async (req) => {
+      await assertStationInScope(ro, req.principal, req.params.id);
+      const q = req.query;
+      const p = new Params([req.params.id]);
+      const where = ['e.station_id = $1'];
+      if (q.status) where.push(`e.status = ${p.add(q.status)}`);
+      if (q.cursor) {
+        const c = decodeCursor(q.cursor);
+        if (!c || c.length !== 2) throw badRequest('invalid cursor', 'invalid_cursor');
+        where.push(`(e.created_at, e.id) < (${p.add(String(c[0]))}::timestamptz, ${p.add(String(c[1]))})`);
+      }
+      const { rows } = await ro.query(
+        `SELECT e.id, e.type, e.status, e.command, e.created_at, u.full_name AS created_by_name,
+                e.delivery_count, e.first_delivered_at, e.last_delivered_at, e.delivered_via,
+                e.received_at, e.completed_at, e.expires_at, e.result,
+                to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS _k
+           FROM fms.edge_commands e LEFT JOIN fms.users u ON u.id = e.created_by
+          WHERE ${where.join(' AND ')}
+          ORDER BY e.created_at DESC, e.id DESC LIMIT ${q.limit + 1}`,
+        p.values,
+      );
+      const more = rows.length > q.limit;
+      const page = rows.slice(0, q.limit);
+      const last = page[page.length - 1];
+      return { items: page.map(({ _k, ...r }) => r), next_cursor: more && last ? encodeCursor([last._k, last.id]) : null };
+    },
+  );
+
   app.patch(
     '/deliveries/:id',
     {
@@ -438,17 +480,18 @@ const stationRoutes: FastifyPluginAsyncZod = async (app) => {
           out.push({ pts_grade_id: x.pts_grade_id, product_code: g.product_code, price: x.price, previous_price: g.price, cap: capBy.get(g.product_code) ?? null });
         }
         const command: EdgeCommand = { id: randomUUID(), type: 'set_prices', prices: prices.map((x) => ({ pts_grade_id: x.pts_grade_id, price: x.price })), effective_at: effectiveAt.toISOString() };
-        const { rows: job } = await c.query<{ id: number }>(
-          `INSERT INTO fms.jobs (kind, payload, dedupe_key) VALUES ('edge_command', $1, $2) RETURNING id`,
-          [JSON.stringify({ station_id: st.id, command }), `edge_command:${command.id}`],
+        // Delivered to the station's edge gateway with acknowledgement (see db/migrations/005_edge_commands.sql).
+        await c.query(
+          `INSERT INTO fms.edge_commands (id, station_id, type, command, created_by) VALUES ($1, $2, 'set_prices', $3, $4)`,
+          [command.id, st.id, JSON.stringify(command), req.principal.id],
         );
         await audit(c, req, {
           action: 'price.station_set',
           entity: 'station',
           entity_id: st.id,
-          details: { prices: out, effective_at: command.effective_at, command_id: command.id, job_id: job[0]!.id },
+          details: { prices: out, effective_at: command.effective_at, command_id: command.id },
         });
-        return { station_id: st.id, effective_at: command.effective_at, command_id: command.id, job_id: job[0]!.id, prices: out };
+        return { station_id: st.id, effective_at: command.effective_at, command_id: command.id, command_status: 'queued', prices: out };
       });
       return reply.status(200).send(result);
     },

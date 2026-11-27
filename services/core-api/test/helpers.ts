@@ -38,7 +38,7 @@ export async function seedTelemetry(app: FastifyInstance) {
   await q(`DELETE FROM fms.daily_station_product WHERE station_id = ANY($1::uuid[])`, [[ST.LUS, ST.COP]]);
   await q(`DELETE FROM fms.alerts WHERE code LIKE 'Test%'`);
   await q(`DELETE FROM fms.tank_deliveries WHERE supplier IS NULL OR supplier LIKE 'Test%'`);
-  await q(`DELETE FROM fms.jobs WHERE kind = 'edge_command'`);
+  await q(`DELETE FROM fms.edge_commands WHERE station_id = ANY($1::uuid[])`, [[ST.LUS, ST.COP]]);
   await q(`DELETE FROM fms.price_changes WHERE kind = 'station' OR (kind = 'erb_cap' AND created_by IS NOT NULL)`);
   await q(`UPDATE fms.fuel_grades SET price = CASE pts_grade_id WHEN 1 THEN 31.85 ELSE 29.95 END`);
   await q(`DELETE FROM fms.login_attempts`);

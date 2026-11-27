@@ -205,6 +205,7 @@ export async function persistRecord(c: PoolClient, rec: TelemetryRecord, ctx: Pe
     }
     case 'fiscal_receipt':
     case 'heartbeat':
+    case 'command_ack':
       await enqueueOutbox(c, rec);
       return { inserted: true };
   }

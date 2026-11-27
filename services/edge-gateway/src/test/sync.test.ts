@@ -181,12 +181,28 @@ test('commands: set_prices forwarded to PTS-2 and idempotent by id; reload_confi
   assert.deepEqual(set.FuelGrades.find((g) => g.Id === 1), { Id: 1, Name: 'Unleaded Petrol', Price: 32.1, ExpansionCoefficient: 0.0012 });
   assert.equal(gw.config.grade(1)?.price, 32.1);
 
-  // the same command delivered again is ignored
+  // acks go through the outbox: 'received' on store, then the final state, in that order
+  const acks = async () =>
+    (await gw.pool.query(`SELECT data FROM edge.outbox WHERE kind='command_ack' ORDER BY seq`)).rows.map(
+      (r) => `${r.data.command_id}:${r.data.status}`,
+    );
+  const first = await acks();
+  for (const [id, final] of [['cmd-price-1', 'applied'], ['cmd-reload-1', 'applied'], ['cmd-x', 'failed']]) {
+    assert.ok(first.indexOf(`${id}:received`) >= 0 && first.indexOf(`${id}:received`) < first.indexOf(`${id}:${final}`), `${id} acks: ${first}`);
+  }
+  const failedAck = (await gw.pool.query(`SELECT data FROM edge.outbox WHERE kind='command_ack' AND data->>'command_id'='cmd-x' AND data->>'status'='failed'`)).rows[0];
+  assert.match(String(failedAck.data.result.error), /unknown command type/);
+  assert.equal((await gw.pool.query(`SELECT count(*)::int n FROM edge.outbox WHERE kind='command_ack' AND sent_at IS NULL`)).rows[0].n, 0, 'acks synced');
+
+  // the same command delivered again is ignored, but its current state is re-acked
   cloud.pendingCommands.push({ id: 'cmd-price-1', type: 'set_prices', prices: [{ pts_grade_id: 1, price: 99 }], effective_at: new Date().toISOString() });
   await upload(1);
   await drainSync();
   assert.equal(ptsCalls.length, 2);
   assert.equal(gw.config.grade(1)?.price, 32.1);
+  const after = await acks();
+  assert.equal(after.length, first.length + 1);
+  assert.equal(after.at(-1), 'cmd-price-1:applied');
 });
 
 test('set_prices scheduled for the future and retried while the PTS-2 is unreachable', async () => {

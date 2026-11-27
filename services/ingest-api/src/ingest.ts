@@ -239,7 +239,7 @@ export async function handleEdgeBatch(
         [gw.gateway_code, station.id, JSON.stringify(rawBatch)],
       );
     }
-    return (await takeEdgeCommands(c, station.id, gw.gateway_code, d.cfg.maxCommandsPerResponse)) as EdgeCommand[];
+    return (await takeEdgeCommands(c, station.id, gw.gateway_code, d.cfg.maxCommandsPerResponse, d.cfg.commandRedeliverS)) as EdgeCommand[];
   };
   // ensure the heartbeat/last_seen update runs even for batches with zero valid records
   const res = await persistWithFallback(d, ctx, items, extra, async () => {});

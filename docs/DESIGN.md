@@ -21,7 +21,7 @@
 | Document | Key facts used in the design |
 |---|---|
 | `PTS-2-forecourt-controller-leaflet.pdf` | Each PTS-2 controller handles up to 50 dispensers, 50 tanks, 50 RFID readers and 5 price boards. It supports more than 145 dispenser brands and more than 50 ATG and probe brands. It has RS-232, RS-485 and Ethernet, and SSL/TLS. It keeps an internal database of sales, tank measurements, deliveries and alerts, and can upload automatically to a remote cloud server. |
-| `PTS-2-forecourt-controller-technical-guide.pdf` (R12, April 2026) | **Communication to remote server** (pp. 110–117): the PTS-2 is an HTTP client. It pushes pump transactions, tank measurements, in-tank deliveries, alert records, GPS records, real-time status (every second or faster) and configuration, using the **jsonPTS** protocol. Requests are signed with a configurable **secret key**. It also supports a WebSocket channel (RFC 6455) for full remote control, such as price updates. Records are saved to an SD card, and the controller keeps an *uploaded* counter, so unconfirmed records are re-sent. **Automatic operation** (pp. 107–109): pumps can be set to authorise on nozzle-up, close the transaction automatically and read the totalisers automatically, so the PTS-2 can run a station with no POS. Pump **totalisers** cannot be reset, which is what lets the server detect manual-mode theft. |
+| `PTS-2-forecourt-controller-technical-guide.pdf` (R12, April 2026) | **Communication to remote server** (pp. 110â€“117): the PTS-2 is an HTTP client. It pushes pump transactions, tank measurements, in-tank deliveries, alert records, GPS records, real-time status (every second or faster) and configuration, using the **jsonPTS** protocol. Requests are signed with a configurable **secret key**. It also supports a WebSocket channel (RFC 6455) for full remote control, such as price updates. Records are saved to an SD card, and the controller keeps an *uploaded* counter, so unconfirmed records are re-sent. **Automatic operation** (pp. 107â€“109): pumps can be set to authorise on nozzle-up, close the transaction automatically and read the totalisers automatically, so the PTS-2 can run a station with no POS. Pump **totalisers** cannot be reset, which is what lets the server detect manual-mode theft. |
 
 **Design consequence:** the PTS-2 controller is the source of truth on the forecourt. It already abstracts every dispenser and ATG brand into a single protocol and gives the first layer of store-and-forward on its SD card. So the FMS does not talk to pumps or probes directly. It integrates with jsonPTS.
 
@@ -127,8 +127,8 @@ The schema is in `db/migrations`.
 - **Infrastructure:** `jobs` (a durable queue), `audit_log`, `users`, `user_station_access`, `api_clients` and `webhook_subscriptions`.
 
 **Sizing estimate:**
-- 1,000 stations × 600 sales a day comes to about 0.6 M transaction rows a day, or about 220 M a year.
-- Tank measurements are written on each height change, which is roughly 2–5 M rows a day.
+- 1,000 stations Ã— 600 sales a day comes to about 0.6 M transaction rows a day, or about 220 M a year.
+- Tank measurements are written on each height change, which is roughly 2â€“5 M rows a day.
 - Monthly partitions keep indexes small and let old raw data be detached and archived cheaply.
 - If the network grows past about 5,000 stations, convert telemetry tables to TimescaleDB hypertables or Citus distributed tables, sharded by `station_id`. The schema is compatible with either.
 
@@ -140,7 +140,7 @@ The aim is no lost sale, no unfiscalised sale and no single point of failure.
 |---|---|---|
 | Pump to PTS-2 | Controller reboot | PTS-2 state on SD card. Totalisers are read on every sale, so gaps are detectable. |
 | PTS-2 to edge | Edge gateway down | PTS-2 keeps records on SD and re-sends anything unconfirmed. A **standby gateway** on the same LAN takes the virtual IP (keepalived/VRRP). The PTS-2 can also be configured with the cloud as a second upload target. |
-| Edge to ZRA | VSDC or internet down | Sale stored with `fiscal_status=pending`. A retry loop uses exponential backoff with a deterministic `invoice_no`, so retries are idempotent. Owners and ZRA see the backlog. Printing is held or reprinted once the sale is signed. Offline handling should follow ZRA Smart Invoice rules (§12). |
+| Edge to ZRA | VSDC or internet down | Sale stored with `fiscal_status=pending`. A retry loop uses exponential backoff with a deterministic `invoice_no`, so retries are idempotent. Owners and ZRA see the backlog. Printing is held or reprinted once the sale is signed. Offline handling should follow ZRA Smart Invoice rules (Â§12). |
 | Edge to cloud | WAN outage (hours or days) | Local Postgres **outbox**, sized for 30+ days. On reconnect, batches are sent at-least-once and the cloud writes are idempotent. Dual WAN (fibre/ADSL plus a 4G router) is recommended. |
 | Cloud ingest | Pod or zone failure | Stateless replicas (at least 3) across two zones behind the load balancer, with an HPA on CPU and request rate. |
 | Database | Primary failure | CloudNativePG or Patroni: **synchronous standby** in the second zone (RPO = 0) and automatic failover (RTO under 60 s). Async read replicas for dashboards and analytics. |
@@ -211,7 +211,7 @@ The aim is no lost sale, no unfiscalised sale and no single point of failure.
 
 1. **Integrator first.** The integrating engineer wrote the shared foundation before any parallel work:
    - this design
-   - the PostgreSQL schema (`db/migrations` 001–003, plus seed data)
+   - the PostgreSQL schema (`db/migrations` 001â€“003, plus seed data)
    - the shared TypeScript contracts (`packages/shared`: jsonPTS normaliser, edge-to-cloud batch format, fiscal interfaces, security helpers)
    - the service contracts (`docs/api/CONTRACTS.md`)
 2. **Eight agents in parallel.** Each owned one directory and built against those contracts:
@@ -220,9 +220,9 @@ The aim is no lost sale, no unfiscalised sale and no single point of failure.
 |---|---|---|
 | Edge gateway and PTS-2 simulator | `services/edge-gateway`, `tools/pts-simulator` | 32 + 5 tests pass |
 | ZRA fiscal | `packages/zra-client`, `packages/fiscal-printer`, `services/fiscal-worker` | 13 + 11 + 17 tests pass |
-| Cloud ingest | `services/ingest-api` | 19 tests pass, about 2,100–3,400 records/s per instance |
+| Cloud ingest | `services/ingest-api` | 19 tests pass, about 2,100â€“3,400 records/s per instance |
 | Core API | `services/core-api` | 31 tests and a 39-check smoke test pass; OpenAPI at `/api/docs` |
-| Analytics and AI | `services/analytics` | 57 pytest tests pass; 14-day forecast MAPE 1–3% on synthetic data |
+| Analytics and AI | `services/analytics` | 57 pytest tests pass; 14-day forecast MAPE 1â€“3% on synthetic data |
 | Web portal | `apps/web` | Build passes, 23 tests pass, about 190 KB gzip on first load |
 | Mobile app | `apps/mobile` | tsc clean, 22 tests pass, web export bundles |
 | Infra and HA | `deploy/`, `.github/workflows`, `Makefile` | Compose and Kustomize render, YAML lint passes |
@@ -234,7 +234,7 @@ The aim is no lost sale, no unfiscalised sale and no single point of failure.
    - core-API response shapes sent to the web and mobile agents
 4. **End to end.** `tools/e2e/e2e.mjs` runs the full pipeline.
 
-### 13.2 End-to-end verification (`node tools/e2e/e2e.mjs`): 23/23 checks pass
+### 13.2 End-to-end verification (`node tools/e2e/e2e.mjs`): 24/24 checks pass
 
 The harness starts all services on fresh databases and runs two PTS-2 simulators for 40 s:
 - station LUS-0001, through its edge gateway, with theft injection
@@ -248,7 +248,7 @@ It then verifies:
 - TotalizerMismatch (theft) alerts are raised
 - the edge outbox drains and the gateway heartbeat arrives
 - the daily roll-up is computed
-- an owner price update succeeds, a price above the ERB cap is rejected, and the price command is delivered to the edge and recorded
+- an owner price update succeeds, a price above the ERB cap is rejected, and the price command is delivered once, acknowledged by the edge (`received`) and visible to the owner
 - the owner dashboard and transactions show ZRA receipt numbers
 - manager scoping works: a station outside scope returns 404
 - the ERB national overview works, and a provincial officer sees only their province
@@ -257,7 +257,11 @@ It then verifies:
 
 ### 13.3 Known limitations and next steps
 
-1. **Edge command delivery is at-least-once only up to the HTTP response.** A command is marked done when it is returned to the gateway. Add an `edge_commands` table with acknowledgement from the gateway's next batch (`commands_applied` already exists at the edge).
+1. **Resolved: cloud-to-station commands are acknowledged end to end** (`005_edge_commands.sql`).
+   - Commands live in `fms.edge_commands` and are redelivered until the gateway's durable `received` ack arrives, then completed with `applied`, `partial` or `failed`.
+   - Unacknowledged commands expire after 7 days with a `CommandExpired` alert.
+   - Owners follow progress with `GET /stations/:id/commands`.
+   - The e2e harness checks the full round trip.
 2. **Command latency.** Commands ride on the next edge-to-cloud exchange, which takes at most the 30 s heartbeat. Use the PTS-2 WebSocket channel, or a gateway long-poll, if faster price pushes are needed.
 3. **Contract additions requested by the mobile and web teams:**
    - `POST/DELETE /api/v1/me/devices` and a device-token table for push notifications (the push notifier is currently a stub)
@@ -273,5 +277,5 @@ It then verifies:
 6. **Not yet verified:**
    - container images are untested (no Docker daemon on the build machine)
    - the mobile app is untested on a real device
-   - jsonPTS, ZRA VSDC and PTS-2 control request names must be checked against the vendor and ZRA specifications (§12). They are isolated in `packages/shared/src/jsonpts.ts`, `packages/zra-client/src/spec.ts` and `services/edge-gateway/src/pts/control.ts`.
+   - jsonPTS, ZRA VSDC and PTS-2 control request names must be checked against the vendor and ZRA specifications (Â§12). They are isolated in `packages/shared/src/jsonpts.ts`, `packages/zra-client/src/spec.ts` and `services/edge-gateway/src/pts/control.ts`.
 7. **Totaliser theft limit.** It is detected from the second sale on a nozzle onwards; the first sale after commissioning has no baseline. Seed the baseline from the controller's `GetPumpTotals` at commissioning.

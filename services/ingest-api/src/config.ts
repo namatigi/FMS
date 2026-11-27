@@ -26,6 +26,8 @@ export interface Config {
   rateLimitBurst: number;
   rollupDelayS: number;
   maxCommandsPerResponse: number;
+  /** Redeliver a command if no 'received' ack arrived this many seconds after delivery. */
+  commandRedeliverS: number;
   archiveEdgeBatches: boolean;
   shutdownTimeoutMs: number;
 }
@@ -46,6 +48,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     rateLimitBurst: int('RATE_LIMIT_BURST', 40),
     rollupDelayS: int('ROLLUP_DELAY_S', 120),
     maxCommandsPerResponse: int('MAX_COMMANDS_PER_RESPONSE', 20),
+    commandRedeliverS: int('COMMAND_REDELIVER_S', 120),
     archiveEdgeBatches: bool('ARCHIVE_EDGE_BATCHES', false),
     shutdownTimeoutMs: int('SHUTDOWN_TIMEOUT_MS', 15000),
     ...overrides,

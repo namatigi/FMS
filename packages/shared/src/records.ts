@@ -113,6 +113,18 @@ export interface GatewayHeartbeatRecord {
   uptime_s: number;
 }
 
+/**
+ * Gateway acknowledgement of a cloud EdgeCommand, sent through the durable outbox.
+ * 'received' is sent as soon as the command is stored at the edge (stops redelivery);
+ * a terminal status follows once it has been applied (or given up on).
+ */
+export interface CommandAckRecord {
+  command_id: string;
+  status: 'received' | 'applied' | 'partial' | 'failed';
+  at: string;                    // ISO-8601 time of this state at the edge
+  result: unknown;               // outcome detail (per-controller results, error)
+}
+
 export type RecordKind =
   | 'pump_transaction'
   | 'tank_measurement'
@@ -120,7 +132,8 @@ export type RecordKind =
   | 'alert'
   | 'status'
   | 'fiscal_receipt'
-  | 'heartbeat';
+  | 'heartbeat'
+  | 'command_ack';
 
 export type TelemetryRecord =
   | { kind: 'pump_transaction'; data: PumpTransactionRecord }
@@ -129,7 +142,8 @@ export type TelemetryRecord =
   | { kind: 'alert'; data: AlertRecord }
   | { kind: 'status'; data: StatusRecord }
   | { kind: 'fiscal_receipt'; data: FiscalReceiptRecord }
-  | { kind: 'heartbeat'; data: GatewayHeartbeatRecord };
+  | { kind: 'heartbeat'; data: GatewayHeartbeatRecord }
+  | { kind: 'command_ack'; data: CommandAckRecord };
 
 /**
  * Edge → cloud sync contract.
@@ -152,7 +166,11 @@ export interface EdgeBatchResponse {
   batch_id: string;
   accepted: number[];            // seqs persisted (or already present)
   rejected: Array<{ seq: number; error: string; retryable: boolean }>;
-  /** Commands queued for the station (e.g. price update), delivered piggy-back. */
+  /**
+   * Commands for the station (e.g. price update), delivered piggy-back from fms.edge_commands.
+   * At-least-once: redelivered until the gateway's 'received' command_ack arrives, so the
+   * gateway must apply them idempotently by id.
+   */
   commands: EdgeCommand[];
 }
 

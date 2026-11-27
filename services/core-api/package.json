@@ -10,7 +10,7 @@
     "dev": "tsx watch src/server.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "openapi": "tsx scripts/gen-openapi.ts",
-    "test": "tsx --test --test-concurrency=1 test/*.test.ts",
+    "test": "tsx --test --test-concurrency=1 test/api.test.ts",
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {

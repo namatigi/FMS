@@ -232,15 +232,26 @@ describe('prices', () => {
     assert.equal(r.json().error.code, 'price_above_cap');
   });
 
-  test('valid price creates edge_command job + price_change + grade update', async () => {
+  test('valid price queues an edge command + price_change + grade update; command visible with status', async () => {
     const r = await send(app, T.owner!, 'PUT', `/api/v1/stations/${ST.LUS}/prices`, { prices: [{ pts_grade_id: 1, price: 31.99 }, { pts_grade_id: 2, price: 30.1 }] });
     assert.equal(r.statusCode, 200, r.body);
     const b = r.json();
-    const { rows } = await app.db.primary.query(`SELECT payload FROM fms.jobs WHERE id = $1 AND kind = 'edge_command'`, [b.job_id]);
-    assert.equal(rows[0].payload.station_id, ST.LUS);
-    assert.equal(rows[0].payload.command.type, 'set_prices');
-    assert.equal(rows[0].payload.command.id, b.command_id);
-    assert.deepEqual(rows[0].payload.command.prices, [{ pts_grade_id: 1, price: 31.99 }, { pts_grade_id: 2, price: 30.1 }]);
+    assert.equal(b.command_status, 'queued');
+    const { rows } = await app.db.primary.query(`SELECT station_id, type, status, command, created_by FROM fms.edge_commands WHERE id = $1`, [b.command_id]);
+    assert.equal(rows[0].station_id, ST.LUS);
+    assert.equal(rows[0].type, 'set_prices');
+    assert.equal(rows[0].status, 'queued');
+    assert.ok(rows[0].created_by);
+    assert.equal(rows[0].command.id, b.command_id);
+    assert.deepEqual(rows[0].command.prices, [{ pts_grade_id: 1, price: 31.99 }, { pts_grade_id: 2, price: 30.1 }]);
+    const list = await send(app, T.owner!, 'GET', `/api/v1/stations/${ST.LUS}/commands`);
+    assert.equal(list.statusCode, 200, list.body);
+    assert.equal(list.json().items[0].id, b.command_id);
+    assert.equal(list.json().items[0].created_by_name, 'Zambezi Owner');
+    const filtered = await send(app, T.owner!, 'GET', `/api/v1/stations/${ST.LUS}/commands?status=applied`);
+    assert.deepEqual(filtered.json().items, []);
+    const out = await send(app, T.owner!, 'GET', `/api/v1/stations/${ST.COP}/commands`);
+    assert.equal(out.statusCode, 404, 'other company station is out of scope');
     const g = await app.db.primary.query(`SELECT price FROM fms.fuel_grades WHERE station_id = $1 AND pts_grade_id = 1`, [ST.LUS]);
     assert.equal(g.rows[0].price, 31.99);
     const pc = await app.db.primary.query(`SELECT count(*)::int n FROM fms.price_changes WHERE station_id = $1 AND kind = 'station'`, [ST.LUS]);

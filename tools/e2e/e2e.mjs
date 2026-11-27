@@ -117,7 +117,8 @@ async function main() {
   await waitHealthy('core-api', `http://localhost:${P.core}/readyz`);
   await waitHealthy('fiscal-worker', `http://localhost:${P.worker}/healthz`);
   await waitHealthy('edge-gateway', `http://localhost:${P.edgeUi}/readyz`);
-  if (haveAnalytics) await waitHealthy('analytics', `http://localhost:${P.analytics}/readyz`, 90_000);
+  // Cold start loads pandas/statsmodels/scikit-learn and the model registry: ~2 min on a slow Windows box.
+  if (haveAnalytics) await waitHealthy('analytics', `http://localhost:${P.analytics}/readyz`, 300_000);
 
   console.log(`3. Simulating PTS-2 controllers for ${DURATION}s`);
   const simEdge = start('sim-edge-LUS-0001', node, ['tools/pts-simulator/dist/cli.js',
@@ -143,10 +144,11 @@ async function main() {
     if (b === 0 && f === 0) break;
     await sleep(1000);
   }
-  // Commands piggy-back on the next edge→cloud exchange (at the latest the 30 s heartbeat).
-  for (let i = 0; i < 45; i++) {
-    const r = (await cloud.query(`SELECT status FROM fms.jobs WHERE kind='edge_command' ORDER BY id DESC LIMIT 1`)).rows[0];
-    if (r?.status === 'done') break;
+  // Commands piggy-back on the next edge→cloud exchange (at the latest the 30 s heartbeat);
+  // the gateway's 'received' ack comes back through its outbox on the following sync.
+  for (let i = 0; i < 60; i++) {
+    const r = (await cloud.query(`SELECT status FROM fms.edge_commands WHERE id = $1`, [priceOk.json.command_id])).rows[0];
+    if (r && !['queued', 'delivered'].includes(r.status)) break;
     await sleep(1000);
   }
   await cloud.query(`SELECT fms.rollup_station_day(id, (now() AT TIME ZONE 'Africa/Lusaka')::date) FROM fms.stations`);
@@ -176,10 +178,14 @@ async function main() {
 
   check('owner price update accepted', priceOk.status === 200, `${priceOk.status}`);
   check('price above ERB cap rejected', priceBad.status === 422, `${priceBad.status}`);
-  const [cmd] = await q(`SELECT status FROM fms.jobs WHERE kind='edge_command' ORDER BY id DESC LIMIT 1`);
-  check('price command delivered to edge gateway', cmd?.status === 'done', cmd?.status);
-  const applied = (await edge.query(`SELECT count(*)::int n FROM edge.commands_applied`)).rows[0];
-  check('edge recorded the price command (applied idempotently)', applied.n > 0, `${applied.n}`);
+  // The harness PTS-2 control URL is unreachable on purpose, so the gateway keeps the price command
+  // scheduled for retry: the cloud must see it as 'received' (acked), not stuck in 'delivered'.
+  const [cmd] = await q(`SELECT status, delivery_count, received_at FROM fms.edge_commands WHERE id = $1`, [priceOk.json?.command_id]);
+  check('price command delivered and acknowledged by edge (received)', cmd?.status === 'received' && !!cmd.received_at, `${cmd?.status}, ${cmd?.delivery_count} deliveries`);
+  const [edgeCmd] = (await edge.query(`SELECT status, attempts FROM edge.commands_applied WHERE id = $1`, [priceOk.json?.command_id])).rows;
+  check('edge keeps price command scheduled while PTS-2 is unreachable', edgeCmd?.status === 'scheduled', `${edgeCmd?.status}, ${edgeCmd?.attempts} attempts`);
+  const cmdApi = await api(`/api/v1/stations/${LUS}/commands`, { token: owner });
+  check('owner sees command status via API', cmdApi.status === 200 && cmdApi.json.items[0]?.status === 'received', cmdApi.json?.items?.[0]?.status);
 
   const dash = await api('/api/v1/dashboard/overview', { token: owner });
   check('owner dashboard shows today\'s sales', dash.status === 200 && dash.json.sales_today.tx_count > 0, `${dash.json?.sales_today?.tx_count} tx`);

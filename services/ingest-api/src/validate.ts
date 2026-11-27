@@ -12,7 +12,10 @@ const KINDS: ReadonlySet<RecordKind> = new Set<RecordKind>([
   'status',
   'fiscal_receipt',
   'heartbeat',
+  'command_ack',
 ]);
+
+const ACK_STATUSES = new Set(['received', 'applied', 'partial', 'failed']);
 
 const INT32_MAX = 2147483647;
 
@@ -220,6 +223,19 @@ export function validateRecord(input: unknown): TelemetryRecord {
         },
       };
     }
+    case 'command_ack': {
+      const status = reqStr(d, 'status');
+      if (!ACK_STATUSES.has(status)) fail('status must be received|applied|partial|failed');
+      return {
+        kind,
+        data: {
+          command_id: reqStr(d, 'command_id'),
+          status: status as 'received' | 'applied' | 'partial' | 'failed',
+          at: reqIso(d, 'at'),
+          result: d.result ?? null,
+        },
+      };
+    }
   }
 }
 
@@ -228,6 +244,7 @@ export function recordPtsId(r: TelemetryRecord): string | null {
   switch (r.kind) {
     case 'fiscal_receipt':
     case 'heartbeat':
+    case 'command_ack':
       return null;
     default:
       return r.data.pts_id;

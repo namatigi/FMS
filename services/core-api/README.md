@@ -64,9 +64,12 @@ the primary), `JWT_SECRET`, `PORT`, `LOG_LEVEL`, `CORS_ORIGINS`,
   it then:
   - inserts `price_changes` with `kind='station'`
   - updates `fuel_grades.price`
-  - enqueues `jobs(kind='edge_command')` with payload
-    `{station_id, command:{id,type:'set_prices',prices,effective_at}}`
+  - inserts an `fms.edge_commands` row (`set_prices`, status `queued`)
   - writes an audit row
+
+  The response carries `command_id` and `command_status`. Follow delivery and
+  station acknowledgement with `GET /stations/:id/commands?status=`: `queued` →
+  `delivered` → `received` → `applied` | `partial` | `failed`, or `expired`.
 - **Days of cover** is stock divided by average daily sales. The average comes
   from the last 7 complete days in `daily_station_product`. If there are no
   roll-ups, it falls back to `pump_transactions` over the last 7×24 h divided

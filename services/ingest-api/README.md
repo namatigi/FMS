@@ -57,16 +57,23 @@ See `.env.example`. The main variables are `DATABASE_URL`, `PORT` (8081), `LOG_L
 
 There is one known window. If a rollup is `running` while new data arrives, it is not re-armed and may miss that data until the next write to that day.
 
-### Edge commands (piggy-back)
+### Edge commands (piggy-back, acknowledged)
 
-The schema has no commands table, so commands are `fms.jobs` rows:
+Commands live in `fms.edge_commands` (`db/migrations/005_edge_commands.sql`); core-api inserts them (e.g. `PUT /stations/:id/prices`).
 
-```sql
-INSERT INTO fms.jobs (kind, payload) VALUES
-  ('edge_command', '{"station_id":"<uuid>","command":{"id":"<uuid>","type":"set_prices","prices":[...],"effective_at":"..."}}');
-```
+- **Delivery.** Each batch response includes up to `MAX_COMMANDS_PER_RESPONSE` commands for the gateway's station:
+  - `queued` ones
+  - `delivered` ones with no `received` ack after `COMMAND_REDELIVER_S` (default 120 s)
 
-Each batch response includes up to `MAX_COMMANDS_PER_RESPONSE` queued commands for the gateway's station. It claims them with `FOR UPDATE SKIP LOCKED`, so parallel instances never return the same command twice. In the same transaction it marks them `status='done'` (`locked_by='ingest:<gateway>'`). Delivery is at-least-once only up to the HTTP response: if the response is lost after commit, the command is lost. The gateway applies commands idempotently by `command.id` (the job id is used if the command has none). Re-queue a command by setting its status back to `queued`.
+  They are claimed with `FOR UPDATE SKIP LOCKED` in the batch transaction and marked `delivered`, with `delivery_count`, `last_delivered_at` and `delivered_via` updated. Expired commands are never sent.
+- **Acknowledgement.** The gateway sends `command_ack` records (`received`, then `applied` / `partial` / `failed`) through its durable outbox.
+  - Status only moves forward (`fms.edge_command_rank`), so re-sent acks are harmless.
+  - `received` stops redelivery.
+  - `failed` or `partial` raises a `CommandFailed` / `CommandPartiallyApplied` alert.
+  - Acks for unknown ids are accepted and ignored.
+- **Guarantee.** A lost HTTP response just means the command is sent again after the timeout. The gateway applies commands idempotently by id and re-acks its current state.
+- **Expiry.** fiscal-worker marks commands still `queued`/`delivered` after `expires_at` (default 7 days) as `expired` and raises `CommandExpired`.
+- **Re-send.** To re-send a command, set its status back to `queued`.
 
 ## Tests
 

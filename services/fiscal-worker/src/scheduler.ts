@@ -69,6 +69,7 @@ export class Scheduler {
       await this.every('sweep', s.fiscalSweepEveryMs, now, async () => {
         await this.sweepFiscal();
         await this.checkGateways();
+        await this.expireCommands();
       });
       const local = zonedNow(s.timeZone, now);
       const due = local.hour > s.dailyAt.hour || (local.hour === s.dailyAt.hour && local.minute >= s.dailyAt.minute);
@@ -206,6 +207,27 @@ export class Scheduler {
       [s.fiscalDirectDelayMinutes, s.fiscalCloudFallbackMinutes, s.fiscalSweepLookbackDays, s.fiscalSweepLimit],
     );
     return { enqueued: r.rowCount ?? 0 };
+  }
+
+  /**
+   * Expire edge commands the station never acknowledged ('queued'/'delivered' past expires_at),
+   * e.g. a price change for a gateway that stayed offline, and raise a CommandExpired alert so the
+   * owner knows the pumps may still show the old price.
+   */
+  async expireCommands(): Promise<{ expired: number }> {
+    const { rowCount } = await this.deps.db.query(
+      `WITH expired AS (
+         UPDATE fms.edge_commands SET status = 'expired', updated_at = now()
+          WHERE status IN ('queued','delivered') AND expires_at <= now()
+          RETURNING id, station_id, type, delivery_count, expires_at)
+       INSERT INTO fms.alerts (station_id, occurred_at, device_type, device_no, code, severity, message, data)
+       SELECT station_id, expires_at, 'gateway', NULL, 'CommandExpired', 'warning',
+              format('Command %s (%s) was not acknowledged by the station before it expired', type, id),
+              jsonb_build_object('command_id', id, 'type', type, 'delivery_count', delivery_count)
+         FROM expired
+       ON CONFLICT DO NOTHING`,
+    );
+    return { expired: rowCount ?? 0 };
   }
 
   /** Raise GatewayOffline alerts (once per outage) and fan out critical ones. */

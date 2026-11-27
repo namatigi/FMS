@@ -202,8 +202,9 @@ export interface PriceUpdateRequest {
 export interface PriceUpdateResponse {
   station_id: string;
   effective_at: string;
-  command_id: string | number;
-  job_id: string | number;
+  command_id: string;
+  /** Delivery status of the price command to the station gateway; 'queued' right after the update. */
+  command_status: 'queued' | 'delivered' | 'received' | 'applied' | 'partial' | 'failed' | 'expired' | 'cancelled';
   prices: { pts_grade_id: number; price: number }[];
 }
 

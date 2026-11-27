@@ -46,7 +46,11 @@ Every service exposes:
 ## ingest-api (port 8081)
 
 - `POST /ingest/pts` takes a jsonPTS request and replies with a jsonPTS response (`jsonPtsReply`). Each packet is stored raw in `ingest_raw` and normalised with `normalizeJsonPtsPacket`, then persisted idempotently. A packet must be replied `OK` only after its commit, because the PTS-2 re-sends anything not confirmed.
-- `POST /ingest/v1/edge/batches` takes an `EdgeBatch` and returns an `EdgeBatchResponse`. Pending commands for the station are piggy-backed in the response.
+- `POST /ingest/v1/edge/batches` takes an `EdgeBatch` and returns an `EdgeBatchResponse`.
+  - Pending commands for the station (`fms.edge_commands`) are piggy-backed in the response.
+  - A command is redelivered every `COMMAND_REDELIVER_S` (120 s) until the gateway's `received` ack arrives.
+  - The gateway acknowledges with `command_ack` records (`CommandAckRecord`: `received`, then `applied` / `partial` / `failed`) through its outbox.
+  - Status only moves forward. A `failed` or `partial` ack raises an alert.
 - **Persistence rules:**
   - pump_transaction:
     - Resolve `station_id` from the controller.
@@ -95,7 +99,8 @@ The JSON is in snake_case. List endpoints return `{ "items": [...], "next_cursor
 - `GET /stations/:id/deliveries?from=&to=`
 - `PATCH /deliveries/:id` takes `{delivery_note_no, supplier, invoiced_volume_l}`. Allowed for owner and manager.
 - `GET /stations/:id/reconciliation?from=&to=` returns `daily_station_product` rows.
-- `PUT /stations/:id/prices` takes `{prices:[{pts_grade_id, price}], effective_at?}`. Allowed for owner and platform_admin. It is rejected when a price is above the ERB cap for that product and province. It queues an edge `set_prices` command.
+- `PUT /stations/:id/prices` takes `{prices:[{pts_grade_id, price}], effective_at?}`. Allowed for owner and platform_admin. It is rejected (422 `price_above_cap`) when a price is above the ERB cap for that product and province. It queues an edge `set_prices` command and returns `{station_id, effective_at, command_id, command_status:'queued', prices}`.
+- `GET /stations/:id/commands?status=&limit=&cursor=` returns items of `{id, type, status, command, created_at, created_by_name, delivery_count, first_delivered_at, last_delivered_at, delivered_via, received_at, completed_at, expires_at, result}`. `status` is one of queued, delivered, received, applied, partial, failed, expired or cancelled.
 
 ### Alerts
 

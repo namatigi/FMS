@@ -2,12 +2,19 @@
  * Cloud commands delivered piggy-back on EdgeBatchResponse. Idempotent by command id:
  * the row in edge.commands_applied is inserted first (status 'scheduled'), so a command seen twice
  * is ignored, and a crash between receive and apply is recovered by the scheduled tick.
+ *
+ * Acknowledgements go to the cloud through the durable outbox (record kind 'command_ack'),
+ * written in the same local transaction as the state change they report:
+ *   'received'                      when the command is first stored (stops cloud redelivery)
+ *   'applied' | 'partial' | 'failed' when it has been processed
+ * A redelivered command re-acks its current state, in case the earlier ack is still queued.
  */
-import type { EdgeCommand } from '@fms/shared';
+import type { CommandAckRecord, EdgeCommand } from '@fms/shared';
 import type { Logger } from 'pino';
 import type { GatewayConfig } from '../config.js';
 import type { ConfigStore } from '../configStore.js';
-import type { Pool } from '../db.js';
+import { withTx, type Pool, type PoolClient } from '../db.js';
+import { enqueueOutbox } from '../store.js';
 import type { FiscalPipeline } from '../fiscal/pipeline.js';
 import type { Metrics } from '../metrics.js';
 import { PtsControlClient, PtsControlError } from '../pts/control.js';
@@ -16,6 +23,10 @@ const MAX_ATTEMPTS = 10;
 const RETRY_MS = 60_000;
 
 type Outcome = { status: 'applied' | 'failed' | 'partial'; result: unknown } | { status: 'retry'; result: unknown };
+
+async function ack(c: PoolClient, command_id: string, status: CommandAckRecord['status'], result: unknown = null): Promise<void> {
+  await enqueueOutbox(c, { kind: 'command_ack', data: { command_id, status, at: new Date().toISOString(), result } });
+}
 
 export class CommandProcessor {
   private timer: NodeJS.Timeout | null = null;
@@ -50,12 +61,23 @@ export class CommandProcessor {
     for (const cmd of cmds) {
       if (!cmd || typeof cmd.id !== 'string' || typeof cmd.type !== 'string') continue;
       const due = cmd.type === 'set_prices' && cmd.effective_at ? new Date(cmd.effective_at) : new Date();
-      const ins = await this.pool.query(
-        `INSERT INTO edge.commands_applied (id, type, payload, status, due_at) VALUES ($1, $2, $3, 'scheduled', $4)
-         ON CONFLICT (id) DO NOTHING`,
-        [cmd.id, cmd.type, JSON.stringify(cmd), Number.isNaN(due.getTime()) ? new Date() : due],
-      );
-      if (!ins.rowCount) {
+      const isNew = await withTx(this.pool, async (c) => {
+        const ins = await c.query(
+          `INSERT INTO edge.commands_applied (id, type, payload, status, due_at) VALUES ($1, $2, $3, 'scheduled', $4)
+           ON CONFLICT (id) DO NOTHING`,
+          [cmd.id, cmd.type, JSON.stringify(cmd), Number.isNaN(due.getTime()) ? new Date() : due],
+        );
+        if (ins.rowCount) {
+          await ack(c, cmd.id, 'received');
+          return true;
+        }
+        // Redelivered: the cloud has not seen our ack yet; repeat the current state.
+        const cur = await c.query<{ status: string; result: unknown }>(`SELECT status, result FROM edge.commands_applied WHERE id = $1`, [cmd.id]);
+        const st = cur.rows[0]?.status;
+        await ack(c, cmd.id, st === 'applied' || st === 'partial' || st === 'failed' ? st : 'received', st === 'scheduled' ? null : cur.rows[0]?.result ?? null);
+        return false;
+      });
+      if (!isNew) {
         this.metrics.commands.inc({ type: cmd.type, result: 'duplicate' });
         continue;
       }
@@ -91,10 +113,13 @@ export class CommandProcessor {
         continue;
       }
       const status = out.status === 'retry' ? 'failed' : out.status;
-      await this.pool.query(
-        `UPDATE edge.commands_applied SET status = $2, attempts = $3, result = $4, applied_at = now() WHERE id = $1`,
-        [row.id, status, attempts, JSON.stringify(out.result)],
-      );
+      await withTx(this.pool, async (c) => {
+        await c.query(
+          `UPDATE edge.commands_applied SET status = $2, attempts = $3, result = $4, applied_at = now() WHERE id = $1`,
+          [row.id, status, attempts, JSON.stringify(out.result)],
+        );
+        await ack(c, row.id, status, out.result);
+      });
       this.metrics.commands.inc({ type: row.payload.type, result: status });
       (status === 'applied' ? this.log.info : this.log.warn).call(this.log, { command_id: row.id, type: row.payload.type, status, result: out.result }, 'cloud command processed');
     }

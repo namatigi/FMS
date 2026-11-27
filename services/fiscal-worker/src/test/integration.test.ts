@@ -399,6 +399,27 @@ describe('scheduler', () => {
     }
   });
 
+  it('expires unacknowledged edge commands once and raises CommandExpired', async () => {
+    await q(
+      `INSERT INTO fms.edge_commands (id, station_id, type, command, status, expires_at) VALUES
+         ('t-exp-1', $1, 'set_prices', '{"id":"t-exp-1","type":"set_prices","prices":[]}', 'delivered', now() - interval '1 minute'),
+         ('t-exp-2', $1, 'reload_config', '{"id":"t-exp-2","type":"reload_config"}', 'received', now() - interval '1 minute'),
+         ('t-exp-3', $1, 'reload_config', '{"id":"t-exp-3","type":"reload_config"}', 'queued', now() + interval '1 day')`,
+      [LUS],
+    );
+    try {
+      assert.deepEqual(await app.scheduler.expireCommands(), { expired: 1 });
+      assert.deepEqual(await app.scheduler.expireCommands(), { expired: 0 });
+      const st = await q<{ id: string; status: string }>(`SELECT id, status FROM fms.edge_commands WHERE id LIKE 't-exp-%' ORDER BY id`);
+      assert.deepEqual(st.map((r) => r.status), ['expired', 'received', 'queued'], 'acknowledged and unexpired commands untouched');
+      const al = await q<{ data: { command_id: string } }>(`SELECT data FROM fms.alerts WHERE code = 'CommandExpired'`);
+      assert.deepEqual(al.map((a) => a.data.command_id), ['t-exp-1']);
+    } finally {
+      await q(`DELETE FROM fms.edge_commands WHERE id LIKE 't-exp-%'`);
+      await q(`DELETE FROM fms.alerts WHERE code = 'CommandExpired'`);
+    }
+  });
+
   it('schedules daily rollups and ERB exports idempotently', async () => {
     const r1 = await app.scheduler.scheduleDaily('2026-11-26');
     assert.deepEqual(r1, { rollups: 4, exports: 11 });

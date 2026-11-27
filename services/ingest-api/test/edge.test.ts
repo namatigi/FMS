@@ -162,23 +162,64 @@ describe('POST /ingest/v1/edge/batches', () => {
     assert.ok(b.rejected.every((r: { retryable: boolean }) => r.retryable === false));
   });
 
-  test('pending edge commands are piggy-backed once and marked done', async () => {
+  test('edge commands: delivered, redelivered until acked, then acked forward-only', async () => {
     await ctx.pool.query(
-      `INSERT INTO fms.jobs (kind, payload) VALUES
-         ('edge_command', jsonb_build_object('station_id', $1::text, 'command', jsonb_build_object('id', 'cmd-a', 'type', 'reload_config'))),
-         ('edge_command', jsonb_build_object('station_id', $1::text, 'command', jsonb_build_object('id', 'cmd-b', 'type', 'set_prices',
-             'prices', jsonb_build_array(jsonb_build_object('pts_grade_id', 1, 'price', 31.5)), 'effective_at', '2026-12-01T00:00:00+02:00')))`,
+      `INSERT INTO fms.edge_commands (id, station_id, type, command, created_at) VALUES
+         ('cmd-a', $1, 'reload_config', jsonb_build_object('id', 'cmd-a', 'type', 'reload_config'), now() - interval '2 s'),
+         ('cmd-b', $1, 'set_prices', jsonb_build_object('id', 'cmd-b', 'type', 'set_prices',
+             'prices', jsonb_build_array(jsonb_build_object('pts_grade_id', 1, 'price', 31.5)), 'effective_at', '2026-12-01T00:00:00+02:00'), now() - interval '1 s'),
+         ('cmd-x', $1, 'reload_config', jsonb_build_object('id', 'cmd-x', 'type', 'reload_config'), now() - interval '3 s')`,
       [f.stationId],
     );
+    await ctx.pool.query(`UPDATE fms.edge_commands SET expires_at = now() - interval '1 s' WHERE id = 'cmd-x'`);
+    const status = async () =>
+      Object.fromEntries((await ctx.pool.query(`SELECT id, status FROM fms.edge_commands WHERE station_id = $1`, [f.stationId])).rows.map((r) => [r.id, r.status]));
+
     const r1 = await send(f, [{ seq: 401, kind: 'heartbeat', data: { gateway_version: '1.2.4', backlog: 0, fiscal_backlog: 0, controllers_online: [], disk_free_mb: null, uptime_s: 1 } }]);
     assert.equal(r1.statusCode, 200);
     const cmds = r1.json().commands;
-    assert.deepEqual(cmds.map((c: { id: string }) => c.id), ['cmd-a', 'cmd-b']);
+    assert.deepEqual(cmds.map((c: { id: string }) => c.id), ['cmd-a', 'cmd-b'], 'expired command is not delivered');
     assert.equal(cmds[1].type, 'set_prices');
     assert.deepEqual(cmds[1].prices, [{ pts_grade_id: 1, price: 31.5 }]);
-    const r2 = await send(f, []);
-    assert.deepEqual(r2.json().commands, []);
-    const { rows } = await ctx.pool.query(`SELECT status FROM fms.jobs WHERE kind = 'edge_command' AND payload->>'station_id' = $1`, [f.stationId]);
-    assert.deepEqual(rows.map((r) => r.status), ['done', 'done']);
+    assert.deepEqual(await status(), { 'cmd-a': 'delivered', 'cmd-b': 'delivered', 'cmd-x': 'queued' });
+
+    // Within the redelivery window nothing is resent.
+    assert.deepEqual((await send(f, [])).json().commands, []);
+
+    // Response "lost": no ack arrives; once the window passes the commands are redelivered.
+    await ctx.pool.query(`UPDATE fms.edge_commands SET last_delivered_at = now() - interval '1 hour' WHERE station_id = $1`, [f.stationId]);
+    const r3 = await send(f, []);
+    assert.deepEqual(r3.json().commands.map((c: { id: string }) => c.id), ['cmd-a', 'cmd-b']);
+
+    // Acks: cmd-a applied (received + applied in one batch), cmd-b received then failed; unknown id ignored.
+    const at = '2026-11-27T10:00:00+02:00';
+    const r4 = await send(f, [
+      { seq: 410, kind: 'command_ack', data: { command_id: 'cmd-a', status: 'received', at, result: null } },
+      { seq: 411, kind: 'command_ack', data: { command_id: 'cmd-b', status: 'received', at, result: null } },
+      { seq: 412, kind: 'command_ack', data: { command_id: 'cmd-a', status: 'applied', at: '2026-11-27T10:00:01+02:00', result: { ok: true } } },
+      { seq: 413, kind: 'command_ack', data: { command_id: 'nope', status: 'applied', at, result: null } },
+      { seq: 414, kind: 'command_ack', data: { command_id: 'cmd-b', status: 'bogus', at, result: null } },
+    ]);
+    assert.equal(r4.statusCode, 200);
+    assert.deepEqual(r4.json().accepted.sort(), [410, 411, 412, 413]);
+    assert.deepEqual(r4.json().rejected.map((r: { seq: number }) => r.seq), [414]);
+    assert.deepEqual(await status(), { 'cmd-a': 'applied', 'cmd-b': 'received', 'cmd-x': 'queued' });
+
+    // A received command is never redelivered, even after the window.
+    await ctx.pool.query(`UPDATE fms.edge_commands SET last_delivered_at = now() - interval '1 hour' WHERE station_id = $1`, [f.stationId]);
+    assert.deepEqual((await send(f, [])).json().commands, []);
+
+    // Late/duplicate 'received' does not downgrade; 'failed' raises a CommandFailed alert.
+    await send(f, [
+      { seq: 420, kind: 'command_ack', data: { command_id: 'cmd-a', status: 'received', at, result: null } },
+      { seq: 421, kind: 'command_ack', data: { command_id: 'cmd-b', status: 'failed', at: '2026-11-27T10:05:00+02:00', result: { error: 'controller rejected price' } } },
+    ]);
+    assert.deepEqual(await status(), { 'cmd-a': 'applied', 'cmd-b': 'failed', 'cmd-x': 'queued' });
+    const { rows } = await ctx.pool.query(
+      `SELECT e.result, e.received_at IS NOT NULL AS rec, e.completed_at IS NOT NULL AS done,
+              (SELECT count(*)::int FROM fms.alerts a WHERE a.station_id = e.station_id AND a.code = 'CommandFailed') AS alerts
+         FROM fms.edge_commands e WHERE e.id = 'cmd-b'`,
+    );
+    assert.deepEqual(rows[0], { result: { error: 'controller rejected price' }, rec: true, done: true, alerts: 1 });
   });
 });

@@ -710,6 +710,66 @@
         }
       }
     },
+    "/api/v1/stations/{id}/commands": {
+      "get": {
+        "summary": "Commands sent to the station edge gateway (e.g. price updates) and their acknowledgement status",
+        "tags": [
+          "stations"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "delivered",
+                "received",
+                "applied",
+                "partial",
+                "failed",
+                "expired",
+                "cancelled"
+              ]
+            },
+            "in": "query",
+            "name": "status",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/api/v1/deliveries/{id}": {
       "patch": {
         "summary": "Reconcile a delivery with its paperwork (owner, manager)",

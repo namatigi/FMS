@@ -14,3 +14,4 @@ __pycache__/
 .pgdata/
 tools/e2e/logs/
 exports/
+*.tsbuildinfo

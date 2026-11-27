@@ -11,6 +11,7 @@ import {
   type AlertRecord,
   type FiscalReceiptRecord,
   type GatewayHeartbeatRecord,
+  type CommandAckRecord,
   type PumpTransactionRecord,
   type StatusRecord,
   type TankDeliveryRecord,
@@ -101,6 +102,7 @@ export class Persister {
     await this.tankMeasurements(by('tank_measurement'));
     await this.tankDeliveries(by('tank_delivery'));
     for (const it of by('alert')) this.alerts.push({ station: it.station, rec: it.rec.data, key: it.key });
+    await this.commandAcks(by('command_ack'));
     await this.insertAlerts();
     await this.statuses(by('status'));
     await this.heartbeats(by('heartbeat'));
@@ -571,6 +573,54 @@ export class Persister {
     );
   }
 
+  // ---------------------------------------------------------------- command acknowledgements
+  /**
+   * Apply gateway acks to fms.edge_commands. Status only moves forward (fms.edge_command_rank),
+   * so re-sent or out-of-order acks are harmless. Acks for unknown ids (or another station's
+   * commands) are accepted and ignored so the gateway does not retry them forever.
+   */
+  private async commandAcks(items: Array<PersistItem & { rec: { kind: 'command_ack'; data: CommandAckRecord } }>) {
+    if (!items.length) return;
+    const station = items[0]!.station;
+    const rows = items.map((i) => ({ k: i.key, ...i.rec.data, result: i.rec.data.result ?? null }));
+    const res = await this.c.query<{ k: number; id: string; type: string; status: string }>(
+      `WITH acks AS (
+          SELECT DISTINCT ON (r.command_id) r.k, r.command_id, r.status, r.at, r.result
+            FROM json_to_recordset($1::json) AS r(k int, command_id text, status text, at timestamptz, result jsonb)
+           ORDER BY r.command_id, fms.edge_command_rank(r.status) DESC, r.at DESC)
+       UPDATE fms.edge_commands e
+          SET status = CASE WHEN fms.edge_command_rank(a.status) > fms.edge_command_rank(e.status) THEN a.status ELSE e.status END,
+              received_at = coalesce(e.received_at, a.at),
+              completed_at = CASE WHEN a.status IN ('applied','partial','failed') THEN coalesce(e.completed_at, a.at) ELSE e.completed_at END,
+              result = CASE WHEN a.status = 'received' THEN e.result ELSE coalesce(a.result, e.result) END,
+              updated_at = now()
+         FROM acks a
+        WHERE e.id = a.command_id AND e.station_id = $2
+       RETURNING a.k, e.id, e.type, a.status`,
+      [JSON.stringify(rows), station.id],
+    );
+    const matched = new Set(res.rows.map((r) => r.id));
+    for (const i of items) this.outcome.set(i.key, matched.has(i.rec.data.command_id) ? 'inserted' : 'ignored');
+    // A command the station could not apply (e.g. price update rejected by the controller) needs a human.
+    for (const r of res.rows) {
+      if (r.status !== 'failed' && r.status !== 'partial') continue;
+      const ack = items.find((i) => i.rec.data.command_id === r.id)!.rec.data;
+      this.alerts.push({
+        station,
+        rec: {
+          pts_id: null,
+          occurred_at: ack.at,
+          device_type: 'gateway',
+          device_no: null,
+          code: r.status === 'failed' ? 'CommandFailed' : 'CommandPartiallyApplied',
+          severity: 'warning',
+          message: `Command ${r.type} (${r.id}) ${r.status} at station ${station.code}`,
+          data: { command_id: r.id, type: r.type, result: ack.result as Record<string, unknown> | null },
+        },
+      });
+    }
+  }
+
   // ---------------------------------------------------------------- fiscal receipts
   private async fiscalReceipts(items: Array<PersistItem & { rec: { kind: 'fiscal_receipt'; data: FiscalReceiptRecord } }>) {
     if (!items.length) return;
@@ -667,24 +717,33 @@ export class Persister {
   }
 }
 
-/** Deliver queued edge commands for a station (jobs kind 'edge_command'); marks them done (at-least-once). */
-export async function takeEdgeCommands(c: Tx, stationId: string, gatewayCode: string, limit: number) {
+/**
+ * Pick commands to deliver to a station's gateway from fms.edge_commands: new ones, plus
+ * 'delivered' ones whose 'received' ack has not arrived within redeliverAfterS (lost response,
+ * gateway crash before storing). Runs in the batch transaction, so a rolled-back batch does
+ * not count as a delivery.
+ */
+export async function takeEdgeCommands(c: Tx, stationId: string, gatewayCode: string, limit: number, redeliverAfterS: number) {
   if (limit <= 0) return [];
-  const res = await c.query<{ id: number; payload: { station_id: string; command: Record<string, unknown> } }>(
+  const res = await c.query<{ id: string; command: Record<string, unknown>; created_at: Date }>(
     `WITH picked AS (
-        SELECT id FROM fms.jobs
-         WHERE kind = 'edge_command' AND status = 'queued' AND run_at <= now()
-           AND payload->>'station_id' = $1
-         ORDER BY id
+        SELECT id FROM fms.edge_commands
+         WHERE station_id = $1
+           AND not_before <= now() AND expires_at > now()
+           AND (status = 'queued'
+                OR (status = 'delivered' AND last_delivered_at < now() - make_interval(secs => $4::int)))
+         ORDER BY created_at, id
          LIMIT $2
          FOR UPDATE SKIP LOCKED)
-     UPDATE fms.jobs j
-        SET status = 'done', locked_by = $3, locked_at = now(), attempts = j.attempts + 1
-       FROM picked WHERE j.id = picked.id
-     RETURNING j.id, j.payload`,
-    [stationId, limit, `ingest:${gatewayCode}`],
+     UPDATE fms.edge_commands e
+        SET status = 'delivered', delivery_count = e.delivery_count + 1,
+            first_delivered_at = coalesce(e.first_delivered_at, now()), last_delivered_at = now(),
+            delivered_via = $3, updated_at = now()
+       FROM picked WHERE e.id = picked.id
+     RETURNING e.id, e.command, e.created_at`,
+    [stationId, limit, gatewayCode, redeliverAfterS],
   );
   return res.rows
-    .sort((a, b) => a.id - b.id)
-    .map((r) => ({ ...(r.payload.command ?? {}), id: String(r.payload.command?.id ?? r.id) }));
+    .sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id))
+    .map((r) => ({ ...r.command, id: r.id }));
 }

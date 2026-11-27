@@ -280,7 +280,7 @@ export const handlers = [
       if (cap && p.price > cap.price) return err(422, 'price_above_cap', `${g.name}: K ${p.price.toFixed(2)} exceeds the ERB cap of K ${cap.price.toFixed(2)} for ${s.province_name}`);
     }
     const effective_at = (body as { effective_at?: string }).effective_at ?? new Date().toISOString();
-    return HttpResponse.json({ station_id: s.id, effective_at, command_id: `cmd-${Date.now()}`, job_id: Date.now(), prices: body.prices });
+    return HttpResponse.json({ station_id: s.id, effective_at, command_id: `cmd-${Date.now()}`, command_status: 'queued', prices: body.prices });
   })),
 
   http.get(`${A}/alerts`, guard(null, ({ user, url }) => {
