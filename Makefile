@@ -22,7 +22,7 @@ IMAGES := core-api:.:services/core-api/Dockerfile \
 
 PROFILE_FLAGS := $(foreach p,$(PROFILES),--profile $(p))
 
-.PHONY: help up up-all down clean logs ps migrate seed test build-images sim config k8s-render
+.PHONY: help up up-all down clean logs ps migrate seed test build-images sim sim-fleet sim-fleet-stop config k8s-render
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-14s %s\n", $$1, $$2}'
@@ -76,8 +76,15 @@ sim: ## Run station LUS-0001 edge gateway + PTS-2 simulator (SIM_ARGS="..." for 
 	SIM_EXTRA_ARGS="$(SIM_ARGS)" $(COMPOSE) --profile edge up -d --build edge-db edge-gateway pts-simulator
 	$(COMPOSE) --profile edge logs -f pts-simulator edge-gateway
 
+sim-fleet: ## Add 200 simulated direct-mode stations (dev only) and run their PTS-2 simulators
+	$(COMPOSE) exec -T pg-primary sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"' < tools/pts-simulator/fleet/stations-200.sql
+	$(COMPOSE) --profile fleet up -d pts-fleet
+
+sim-fleet-stop: ## Stop the 200-station simulator (the stations stay in the database)
+	$(COMPOSE) --profile fleet rm -sf pts-fleet
+
 config: ## Validate the compose file
-	$(COMPOSE) --profile edge --profile observability config -q
+	$(COMPOSE) --profile edge --profile fleet --profile observability config -q
 
 k8s-render: ## Render the Kubernetes overlays (validation)
 	kubectl kustomize deploy/k8s/overlays/staging > /dev/null

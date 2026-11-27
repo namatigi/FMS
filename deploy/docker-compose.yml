@@ -297,6 +297,26 @@ services:
       edge-gateway: { condition: service_healthy }
     logging: *logging
 
+  # 200 simulated direct-mode controllers uploading straight to ingest-api.
+  # Needs tools/pts-simulator/fleet/stations-200.sql applied first: use `make sim-fleet`.
+  pts-fleet:
+    profiles: [fleet]
+    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/pts-simulator:${TAG:-dev}
+    build:
+      context: ..
+      dockerfile: deploy/pts-simulator/Dockerfile
+    restart: unless-stopped
+    command: >-
+      --url http://ingest-api:8081/ingest/pts
+      --pts-id 0A5100000000000000000001 --controllers ${FLEET_SIZE:-200}
+      --secret devsecret-sim --pumps 2 --tanks 2
+      --rate ${FLEET_RATE:-0.02} --status-interval 30 --upload-interval 5000
+      --fault-inject --quiet
+      ${FLEET_EXTRA_ARGS:-}
+    depends_on:
+      ingest-api: { condition: service_healthy }
+    logging: *logging
+
   # ---------------------------------------------------------------- observability
   postgres-exporter:
     profiles: [observability]
