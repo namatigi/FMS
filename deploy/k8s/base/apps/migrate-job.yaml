@@ -1,0 +1,57 @@
+# Pre-deploy schema migration (image built from deploy/migrate/Dockerfile).
+#
+# Run it BEFORE rolling out new application images:
+#   * Argo CD: the PreSync hook annotations below make it run first on every sync.
+#   * Plain kubectl / CI:
+#       kubectl -n fms delete job fms-migrate --ignore-not-found
+#       kubectl apply -k deploy/k8s/overlays/production   # job + everything else
+#       kubectl -n fms wait --for=condition=complete job/fms-migrate --timeout=15m
+#     Migrations must be backwards compatible (expand/contract) because old
+#     pods keep serving while the job runs.
+# db/migrate.mjs holds a session advisory lock, so it connects to the
+# primary service fms-pg-rw directly, never through PgBouncer (transaction mode).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fms-migrate
+  labels:
+    app.kubernetes.io/name: fms-migrate
+    app.kubernetes.io/part-of: fms
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 4
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fms-migrate
+        app.kubernetes.io/part-of: fms
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: fms/migrate
+          args: []          # never pass --seed outside development
+          env:
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: fms-pg-app, key: username } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: fms-pg-app, key: password } }
+            - name: DATABASE_URL
+              value: postgres://$(DB_USER):$(DB_PASSWORD)@fms-pg-rw:5432/fms?sslmode=require
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }

@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/.env
+**/*.log
+.git
+apps
+db
+docs
+deploy
+services/core-api
+services/ingest-api
+services/fiscal-worker
+services/analytics
+*.pdf

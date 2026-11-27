@@ -1,0 +1,35 @@
+# Local subset of the production alert rules
+# (production: deploy/k8s/base/monitoring/prometheusrule.yaml).
+groups:
+  - name: fms-local
+    rules:
+      - alert: FmsStationsOfflineSpike
+        expr: sum({__name__=~"(cnpg_)?fms_stations_count", connectivity="offline"}) - sum({__name__=~"(cnpg_)?fms_stations_count", connectivity="offline"} offset 15m) > 5
+        for: 5m
+        labels: { severity: critical }
+        annotations: { summary: "More than 5 additional stations went offline in 15 minutes" }
+      - alert: FmsGatewayBacklogGrowing
+        expr: max by (gateway_code) ({__name__=~"(cnpg_)?fms_gateway_backlog"}) > 100 and max by (gateway_code) (deriv({__name__=~"(cnpg_)?fms_gateway_backlog"}[30m])) > 0
+        for: 30m
+        labels: { severity: warning }
+        annotations: { summary: "Gateway {{ $labels.gateway_code }} outbox backlog is growing" }
+      - alert: FmsFiscalBacklog
+        expr: max({__name__=~"(cnpg_)?fms_fiscal_oldest_unsigned_seconds"}) > 3600
+        for: 10m
+        labels: { severity: critical }
+        annotations: { summary: "Sales unsigned by ZRA VSDC for more than 1 hour" }
+      - alert: FmsJobsDeadLetter
+        expr: sum({__name__=~"(cnpg_)?fms_jobs_count", status="dead"}) > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations: { summary: "Jobs moved to the dead-letter state" }
+      - alert: FmsIngest5xx
+        expr: sum(rate(http_request_duration_seconds_count{job="ingest-api", status_code=~"5.."}[5m])) / clamp_min(sum(rate(http_request_duration_seconds_count{job="ingest-api"}[5m])), 1e-9) > 0.02
+        for: 5m
+        labels: { severity: critical }
+        annotations: { summary: "ingest-api 5xx ratio above 2%" }
+      - alert: FmsReplicationLag
+        expr: max(fms_replication_lag_seconds) > 30 or absent(fms_replication_lag_seconds)
+        for: 5m
+        labels: { severity: critical }
+        annotations: { summary: "Replica lag above 30s, or no replica connected" }

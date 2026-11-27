@@ -1,0 +1,45 @@
+# Native (non-Docker) install of the FMS edge gateway. Installed by
+# deploy/edge/install-systemd.sh. Requires the local PostgreSQL 16 service.
+[Unit]
+Description=FMS edge gateway (PTS-2 jsonPTS listener, ZRA fiscalisation, cloud sync)
+Documentation=file:///opt/fms-edge-gateway/README.md
+Wants=network-online.target
+After=network-online.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=fms-edge
+Group=fms-edge
+WorkingDirectory=/opt/fms-edge-gateway/current
+EnvironmentFile=/etc/fms-edge/gateway.env
+ExecStart=/usr/bin/node services/edge-gateway/dist/index.js
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=0
+TimeoutStopSec=30
+LimitNOFILE=65536
+# Logs go to journald; rotation via /etc/systemd/journald.conf.d/fms.conf.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fms-edge-gateway
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+DeviceAllow=/dev/usb/lp0 rw
+DeviceAllow=char-ttyUSB rw
+ReadWritePaths=/var/lib/fms-edge
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

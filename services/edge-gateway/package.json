@@ -1,0 +1,37 @@
+{
+  "name": "@fms/edge-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FMS station edge gateway: PTS-2 jsonPTS listener, local Postgres outbox, ZRA fiscalisation + printing, cloud sync, local admin UI",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/main.js",
+    "test": "tsc -p tsconfig.json && node --test --test-concurrency=1 dist/test/"
+  },
+  "dependencies": {
+    "@fms/shared": "file:../../packages/shared",
+    "fastify": "^5.2.0",
+    "pg": "^8.13.0",
+    "pino": "^9.5.0",
+    "prom-client": "^15.1.3"
+  },
+  "optionalDependencies": {
+    "@fms/fiscal-printer": "file:../../packages/fiscal-printer",
+    "@fms/zra-client": "file:../../packages/zra-client"
+  },
+  "devDependencies": {
+    "@fms/pts-simulator": "file:../../tools/pts-simulator",
+    "@types/node": "^20.14.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "overrides": {
+    "cookie": "^1.0.2"
+  }
+}

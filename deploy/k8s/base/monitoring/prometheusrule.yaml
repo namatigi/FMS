@@ -1,0 +1,146 @@
+# FMS alerting rules. Response actions per alert: deploy/README.md
+# "Monitoring and alerts". Business metrics come from CNPG custom queries
+# (cnpg_fms_*); HTTP metrics assume a Fastify-style histogram
+# http_request_duration_seconds{route,status_code} on every service.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fms-alerts
+  labels: { release: kube-prometheus-stack }
+spec:
+  groups:
+    - name: fms.stations
+      rules:
+        - alert: FmsStationsOfflineSpike
+          # Sudden jump in offline stations: regional WAN/power outage, or a
+          # cloud-side ingest problem if it hits every province at once.
+          expr: |
+            sum by (province_id) (cnpg_fms_stations_count{connectivity="offline"})
+              - sum by (province_id) (cnpg_fms_stations_count{connectivity="offline"} offset 15m) > 5
+          for: 10m
+          labels: { severity: critical, team: noc }
+          annotations:
+            summary: "Province {{ $labels.province_id }}: {{ $value }} more stations offline than 15 min ago"
+        - alert: FmsStationsOfflineRatioHigh
+          expr: |
+            sum(cnpg_fms_stations_count{connectivity="offline"}) / clamp_min(sum(cnpg_fms_stations_count), 1) > 0.10
+          for: 15m
+          labels: { severity: critical, team: noc }
+          annotations:
+            summary: "More than 10% of active stations are offline nationally"
+        - alert: FmsGatewayBacklogGrowing
+          expr: |
+            max by (gateway_code, station_code) (cnpg_fms_gateway_backlog) > 500
+              and max by (gateway_code, station_code) (deriv(cnpg_fms_gateway_backlog[30m])) > 0
+          for: 30m
+          labels: { severity: warning, team: noc }
+          annotations:
+            summary: "Gateway {{ $labels.gateway_code }} ({{ $labels.station_code }}) outbox backlog growing: {{ $value }}"
+        - alert: FmsGatewaySilent
+          expr: max by (gateway_code, station_code) (cnpg_fms_gateway_seconds_since_seen) > 86400
+          for: 15m
+          labels: { severity: warning, team: compliance }
+          annotations:
+            summary: "Gateway {{ $labels.gateway_code }} has not reported for more than 24 h (ERB compliance)"
+
+    - name: fms.fiscal
+      rules:
+        - alert: FmsFiscalBacklog
+          expr: max(cnpg_fms_fiscal_oldest_unsigned_seconds) > 3600 and sum(cnpg_fms_fiscal_pending) > 100
+          for: 15m
+          labels: { severity: critical, team: fiscal }
+          annotations:
+            summary: "{{ $value }}: sales unsigned by ZRA VSDC for more than 1 hour"
+        - alert: FmsFiscalFailures
+          expr: increase(cnpg_fms_fiscal_failed[1h]) > 20
+          labels: { severity: warning, team: fiscal }
+          annotations:
+            summary: "Fiscalisation failures increasing ({{ $value }} in the last hour)"
+
+    - name: fms.jobs
+      rules:
+        - alert: FmsJobsDeadLetter
+          expr: sum by (kind) (cnpg_fms_jobs_count{status="dead"}) > 0
+          for: 5m
+          labels: { severity: warning, team: platform }
+          annotations:
+            summary: "{{ $value }} dead-letter jobs of kind {{ $labels.kind }}"
+        - alert: FmsJobQueueStalled
+          expr: max by (kind) (cnpg_fms_jobs_oldest_ready_seconds) > 900
+          for: 10m
+          labels: { severity: critical, team: platform }
+          annotations:
+            summary: "Oldest due {{ $labels.kind }} job waiting {{ $value }}s: fiscal-worker stalled or under-scaled"
+
+    - name: fms.http
+      rules:
+        - alert: FmsIngest5xxRate
+          expr: |
+            sum(rate(http_request_duration_seconds_count{service="ingest-api", status_code=~"5.."}[5m]))
+              / clamp_min(sum(rate(http_request_duration_seconds_count{service="ingest-api"}[5m])), 1e-9) > 0.02
+          for: 5m
+          labels: { severity: critical, team: platform }
+          annotations:
+            summary: "ingest-api 5xx ratio {{ $value | humanizePercentage }} (stations will buffer and retry)"
+        - alert: FmsApiLatencyHigh
+          expr: |
+            histogram_quantile(0.95, sum by (le, service) (rate(http_request_duration_seconds_bucket{service=~"core-api|ingest-api"}[5m]))) > 1.5
+          for: 10m
+          labels: { severity: warning, team: platform }
+          annotations:
+            summary: "{{ $labels.service }} p95 latency {{ $value }}s"
+
+    - name: fms.database
+      rules:
+        - alert: FmsPgReplicationLag
+          expr: max by (pod) (cnpg_pg_replication_lag) > 30
+          for: 5m
+          labels: { severity: critical, team: dba }
+          annotations:
+            summary: "Standby {{ $labels.pod }} is {{ $value }}s behind the primary"
+        - alert: FmsPgNoSyncStandby
+          # Reported by the primary's instance manager.
+          expr: max(cnpg_collector_sync_replicas{value="observed"}) < 1
+          for: 2m
+          labels: { severity: critical, team: dba }
+          annotations:
+            summary: "Primary has no streaming standby: synchronous commits will block / RPO no longer 0"
+        - alert: FmsPgWalArchivingFailing
+          expr: |
+            cnpg_pg_stat_archiver_seconds_since_last_archival > 900
+              or increase(cnpg_pg_stat_archiver_failed_count[15m]) > 0
+          for: 5m
+          labels: { severity: critical, team: dba }
+          annotations:
+            summary: "WAL archiving to object storage failing on {{ $labels.pod }}: PITR window at risk"
+        - alert: FmsPgBackupFailed
+          expr: |
+            (cnpg_collector_last_failed_backup_timestamp > cnpg_collector_last_available_backup_timestamp)
+              or (time() - cnpg_collector_last_available_backup_timestamp > 26 * 3600)
+          for: 10m
+          labels: { severity: critical, team: dba }
+          annotations:
+            summary: "Last base backup failed or older than 26 h"
+        - alert: FmsPgStorageFilling
+          expr: |
+            kubelet_volume_stats_available_bytes{persistentvolumeclaim=~"fms-pg-.*"}
+              / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~"fms-pg-.*"} < 0.15
+          for: 15m
+          labels: { severity: warning, team: dba }
+          annotations:
+            summary: "PVC {{ $labels.persistentvolumeclaim }} has less than 15% free space"
+
+    - name: fms.certificates
+      rules:
+        - alert: FmsCertificateExpiringSoon
+          expr: certmanager_certificate_expiration_timestamp_seconds{namespace=~"fms.*"} - time() < 14 * 86400
+          for: 1h
+          labels: { severity: warning, team: platform }
+          annotations:
+            summary: "Certificate {{ $labels.name }} expires in less than 14 days (cert-manager renewal failing?)"
+        - alert: FmsCertificateNotReady
+          expr: certmanager_certificate_ready_status{namespace=~"fms.*", condition="False"} == 1
+          for: 30m
+          labels: { severity: critical, team: platform }
+          annotations:
+            summary: "Certificate {{ $labels.name }} is not Ready"

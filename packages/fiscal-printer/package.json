@@ -1,0 +1,37 @@
+{
+  "name": "@fms/fiscal-printer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fuel receipt rendering, ESC/POS drivers (TCP 9100 / serial) with ZRA QR code, and a plug-in registry for ZRA-approved fiscal devices",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test dist/"
+  },
+  "dependencies": {
+    "@fms/shared": "file:../../packages/shared"
+  },
+  "peerDependencies": {
+    "serialport": "^12.0.0"
+  },
+  "peerDependenciesMeta": {
+    "serialport": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

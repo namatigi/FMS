@@ -1,0 +1,77 @@
+# FMS edge gateway: station mini-PC deployment (Docker option).
+#
+#   sudo mkdir -p /opt/fms-edge && cd /opt/fms-edge
+#   copy this file + .env.example (as .env), edit .env
+#   sudo docker compose up -d
+#
+# Everything restarts automatically after a power cut (restart: always plus
+# the Docker service enabled at boot). The local Postgres holds the durable
+# outbox (sized for 30+ days of WAN outage), so its volume must live on the
+# SSD, never on tmpfs/SD.
+name: fms-edge
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "20m", max-file: "5", compress: "true" }
+
+services:
+  edge-db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: edge
+      POSTGRES_PASSWORD: ${EDGE_PG_PASSWORD:?set EDGE_PG_PASSWORD in .env}
+      POSTGRES_DB: edge
+      TZ: UTC
+    command:
+      - postgres
+      - -c
+      - synchronous_commit=on
+      - -c
+      - fsync=on
+      - -c
+      - full_page_writes=on
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - max_connections=50
+    volumes:
+      - ${EDGE_DATA_DIR:-/var/lib/fms-edge}/postgres:/var/lib/postgresql/data
+    # Not published: only the gateway talks to it.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U edge -d edge"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    stop_grace_period: 60s
+    logging: *logging
+
+  edge-gateway:
+    # Pin by digest for fleet rollouts (see update.sh): image@sha256:...
+    image: ${EDGE_IMAGE:-ghcr.io/oxoafrica/fms/edge-gateway}:${EDGE_TAG:?set EDGE_TAG in .env}
+    restart: always
+    depends_on:
+      edge-db: { condition: service_healthy }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://edge:${EDGE_PG_PASSWORD}@edge-db:5432/edge
+      EDGE_PTS_PORT: "8100"
+      EDGE_UI_PORT: "8101"
+      TZ: Africa/Lusaka
+    ports:
+      # PTS-2 uploads (jsonPTS). With keepalived the PTS-2 targets the VIP.
+      - "${EDGE_BIND_ADDR:-0.0.0.0}:8100:8100"
+      # Local status UI for station staff (LAN only - firewall from WAN).
+      - "${EDGE_BIND_ADDR:-0.0.0.0}:8101:8101"
+    # Optional: USB/serial fiscal or receipt printer.
+    # devices:
+    #   - /dev/usb/lp0:/dev/usb/lp0
+    #   - /dev/ttyUSB0:/dev/ttyUSB0
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8100/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    stop_grace_period: 30s
+    logging: *logging

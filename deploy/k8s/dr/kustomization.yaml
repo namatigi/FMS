@@ -1,0 +1,8 @@
+# DR site database only. Application workloads at the DR site are deployed
+# from overlays/production (scaled to minimum) with DB hosts pointing at the
+# fms-pg-dr poolers once promoted.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fms
+resources:
+  - replica-cluster.yaml

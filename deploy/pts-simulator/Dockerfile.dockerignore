@@ -1,0 +1,5 @@
+**
+!packages/shared/**
+!tools/pts-simulator/**
+**/node_modules
+**/dist

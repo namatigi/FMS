@@ -1,0 +1,14 @@
+# Runtime dependencies (compatible-release pins; tested versions noted).
+fastapi~=0.165.0
+uvicorn[standard]~=0.54.0
+psycopg[binary]~=3.3.9
+psycopg-pool~=3.3.3
+pandas~=2.3.3
+numpy~=2.5.5
+statsmodels~=0.14.6
+scikit-learn~=1.9.1
+PyJWT~=2.15.1
+prometheus-client~=0.26.0
+pydantic~=2.14.4
+PyYAML~=6.0.4
+httpx~=0.29.0

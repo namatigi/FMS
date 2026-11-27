@@ -1,0 +1,35 @@
+# FMS production base. Prerequisites in the cluster (installed separately):
+#   CloudNativePG operator + plugin-barman-cloud (cnpg-system), cert-manager,
+#   ingress-nginx, External Secrets Operator, kube-prometheus-stack
+#   (monitoring), optionally prometheus-adapter (custom-metrics HPA component).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fms
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: fms
+    includeSelectors: false
+resources:
+  - namespace.yaml
+  - config.yaml
+  - security/external-secrets.yaml
+  - security/networkpolicies.yaml
+  - postgres/cluster.yaml
+  - postgres/pooler.yaml
+  - postgres/monitoring-queries.yaml
+  - apps/migrate-job.yaml
+  - apps/core-api.yaml
+  - apps/ingest-api.yaml
+  - apps/analytics.yaml
+  - apps/fiscal-worker.yaml
+  - apps/web.yaml
+  - ingress.yaml
+  - monitoring/monitors.yaml
+  - monitoring/prometheusrule.yaml
+images:
+  - { name: fms/core-api, newName: ghcr.io/oxoafrica/fms/core-api, newTag: latest }
+  - { name: fms/ingest-api, newName: ghcr.io/oxoafrica/fms/ingest-api, newTag: latest }
+  - { name: fms/fiscal-worker, newName: ghcr.io/oxoafrica/fms/fiscal-worker, newTag: latest }
+  - { name: fms/analytics, newName: ghcr.io/oxoafrica/fms/analytics, newTag: latest }
+  - { name: fms/web, newName: ghcr.io/oxoafrica/fms/web, newTag: latest }
+  - { name: fms/migrate, newName: ghcr.io/oxoafrica/fms/migrate, newTag: latest }

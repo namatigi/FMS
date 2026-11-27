@@ -1,0 +1,215 @@
+# Default-deny for the namespace, then explicit allow paths:
+#   ingress-nginx -> web/core-api/ingest-api/analytics
+#   apps -> PgBouncer poolers -> Postgres instances (replication between instances)
+#   migrate job -> Postgres primary (direct)
+#   CNPG operator -> instances/poolers (status, instance manager)
+#   monitoring (Prometheus) -> metrics ports
+#   Postgres/poolers -> Kubernetes API, Postgres -> object storage (backups/WAL)
+#   fiscal-worker -> ZRA VSDC + webhook receivers (HTTPS egress)
+# Namespace names assumed: ingress-nginx, cnpg-system, monitoring, kube-system.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-controller
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/name, operator: In, values: [web, core-api, ingest-api, analytics] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+      ports:
+        - { protocol: TCP, port: 80 }
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8081 }
+        - { protocol: TCP, port: 8090 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: monitoring }
+      ports:
+        - { protocol: TCP, port: 8080 }   # core-api
+        - { protocol: TCP, port: 8081 }   # ingest-api
+        - { protocol: TCP, port: 8090 }   # analytics
+        - { protocol: TCP, port: 9464 }   # fiscal-worker
+        - { protocol: TCP, port: 9187 }   # CNPG instance metrics
+        - { protocol: TCP, port: 9127 }   # CNPG PgBouncer metrics
+---
+# Application pods may reach the poolers (and analytics/core-api the ro pooler).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apps-egress-to-poolers
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/name, operator: In, values: [core-api, ingest-api, analytics, fiscal-worker] }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchExpressions:
+              - { key: cnpg.io/poolerName, operator: In, values: [fms-pg-pooler-rw, fms-pg-pooler-ro] }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: poolers
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: cnpg.io/poolerName, operator: In, values: [fms-pg-pooler-rw, fms-pg-pooler-ro] }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: app.kubernetes.io/name, operator: In, values: [core-api, ingest-api, analytics, fiscal-worker] }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: cnpg-system }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { cnpg.io/cluster: fms-pg }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # Kubernetes API (the pooler's instance manager watches its resources).
+    - ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-instances
+spec:
+  podSelector:
+    matchLabels: { cnpg.io/cluster: fms-pg }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Poolers and the migration job
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: cnpg.io/poolerName, operator: In, values: [fms-pg-pooler-rw, fms-pg-pooler-ro] }
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: fms-migrate }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # Streaming replication between instances (incl. join / pg_rewind)
+    - from:
+        - podSelector:
+            matchLabels: { cnpg.io/cluster: fms-pg }
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
+    # CNPG operator: instance manager status (8000) and admin connections
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: cnpg-system }
+      ports:
+        - { protocol: TCP, port: 8000 }
+        - { protocol: TCP, port: 5432 }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { cnpg.io/cluster: fms-pg }
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
+    # Kubernetes API + S3-compatible object storage (Barman WAL/base backups).
+    # Tighten to the object-store CIDR in the overlay where it is known.
+    - ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+        - { protocol: TCP, port: 9000 }   # MinIO-style endpoints
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: migrate-egress
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: fms-migrate }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { cnpg.io/cluster: fms-pg }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+# fiscal-worker calls ZRA VSDC and partner webhook endpoints over HTTPS.
+# Private ranges are excluded so a compromised worker cannot pivot internally.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fiscal-worker-egress-https
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: fiscal-worker }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16]
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+# analytics may call external custom-AI model servers (HTTP endpoint models).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: analytics-egress-models
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: analytics }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { fms.zm/model-serving: "true" }
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 8080 }

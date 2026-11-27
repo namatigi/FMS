@@ -1,0 +1,68 @@
+# Public entry points (ingress-nginx + cert-manager). Hosts / issuer are
+# patched per overlay. Two Ingress objects because the ingest path needs
+# different limits (large store-and-forward batches, many stations behind
+# shared 4G CGNAT addresses) from the interactive API.
+# Only this first Ingress carries the cert-manager annotation; the second one
+# reuses the same TLS secret (avoids two Certificates fighting over it).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fms-web-api
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: 2m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    # Per-client-IP rate limit (requests/second, burst = rps x multiplier).
+    nginx.ingress.kubernetes.io/limit-rps: "30"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+    # WAF (ModSecurity + OWASP CRS) on the interactive surface.
+    nginx.ingress.kubernetes.io/enable-modsecurity: "true"
+    nginx.ingress.kubernetes.io/enable-owasp-core-rules: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [fms.example.zm]
+      secretName: fms-tls
+  rules:
+    - host: fms.example.zm
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend: { service: { name: core-api, port: { name: http } } }
+          - path: /analytics
+            pathType: Prefix
+            backend: { service: { name: analytics, port: { name: http } } }
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: web, port: { name: http } } }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fms-ingest
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: 16m
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "on"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout http_502 http_503 http_504 non_idempotent"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "3"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "10"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [fms.example.zm]
+      secretName: fms-tls
+  rules:
+    - host: fms.example.zm
+      http:
+        paths:
+          - path: /ingest
+            pathType: Prefix
+            backend: { service: { name: ingest-api, port: { name: http } } }

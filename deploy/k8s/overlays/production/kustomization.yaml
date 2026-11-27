@@ -1,0 +1,55 @@
+# Production: 3 AZs, request-rate / job-backlog autoscaling, pinned images.
+# CI replaces newTag with the release tag (or digest) on every deploy:
+#   (cd deploy/k8s/overlays/production && kustomize edit set image ghcr.io/oxoafrica/fms/core-api=ghcr.io/oxoafrica/fms/core-api:v0.1.0 ...)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fms
+resources:
+  - ../../base
+components:
+  - ../../components/custom-metrics-hpa
+# Base maps the fms/<name> placeholders to ghcr.io/oxoafrica/fms/<name>; overlays match on that.
+images:
+  - { name: ghcr.io/oxoafrica/fms/core-api, newTag: v0.1.0 }
+  - { name: ghcr.io/oxoafrica/fms/ingest-api, newTag: v0.1.0 }
+  - { name: ghcr.io/oxoafrica/fms/fiscal-worker, newTag: v0.1.0 }
+  - { name: ghcr.io/oxoafrica/fms/analytics, newTag: v0.1.0 }
+  - { name: ghcr.io/oxoafrica/fms/web, newTag: v0.1.0 }
+  - { name: ghcr.io/oxoafrica/fms/migrate, newTag: v0.1.0 }
+configMapGenerator:
+  - name: fms-config
+    behavior: merge
+    literals:
+      - LOG_LEVEL=info
+      - ZRA_VSDC_URL=https://vsdc.example.zra.org.zm
+patches:
+  - target: { kind: Cluster, name: fms-pg }
+    patch: |-
+      # Requires >= 3 zones for 3 instances. With only 2 data centres keep
+      # "preferred" (base) - syncReplicaElectionConstraint still forces the
+      # synchronous standby into the other zone.
+      - op: replace
+        path: /spec/affinity/podAntiAffinityType
+        value: required
+      - op: replace
+        path: /spec/storage/size
+        value: 1Ti
+      - op: replace
+        path: /spec/walStorage/size
+        value: 200Gi
+      - op: replace
+        path: /spec/resources
+        value: { requests: { cpu: "4", memory: 16Gi }, limits: { memory: 16Gi } }
+  - target: { kind: HorizontalPodAutoscaler, name: ingest-api }
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 4
+      - op: replace
+        path: /spec/maxReplicas
+        value: 40
+  - target: { kind: Deployment, name: ingest-api }
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 4

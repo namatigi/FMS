@@ -1,0 +1,17 @@
+{
+  "name": "zambia-fuel-monitoring-system",
+  "private": true,
+  "version": "0.1.0",
+  "description": "National Fuel Monitoring System (FMS): PTS-2 forecourt/ATG telemetry, ZRA Smart Invoice fiscalisation, owner dashboards and ERB regulator analytics.",
+  "type": "module",
+  "scripts": {
+    "db:migrate": "node db/migrate.mjs",
+    "db:seed": "node db/migrate.mjs --seed"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

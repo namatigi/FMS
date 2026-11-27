@@ -1,0 +1,32 @@
+# /etc/systemd/system/fms-edge-gateway.service
+[Unit]
+Description=FMS edge gateway (PTS-2 listener, ZRA fiscalisation, cloud sync)
+Documentation=file:///opt/fms/services/edge-gateway/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=fms
+Group=fms
+WorkingDirectory=/opt/fms/services/edge-gateway
+EnvironmentFile=/etc/fms/edge-gateway.env
+ExecStart=/usr/bin/node dist/main.js
+Restart=always
+RestartSec=3
+# graceful shutdown: close the listener (PTS-2 keeps unconfirmed records), finish fiscal/sync work
+KillSignal=SIGTERM
+TimeoutStopSec=30
+# /run/fms-edge holds the keepalived state file for HA_MODE=file
+RuntimeDirectory=fms-edge
+RuntimeDirectoryPreserve=yes
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+# serial / USB receipt printers
+SupplementaryGroups=dialout lp
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

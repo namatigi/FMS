@@ -1,0 +1,358 @@
+# National Fuel Monitoring System: local full stack + HA demo.
+#
+#   cp deploy/.env.example deploy/.env           # optional, defaults work
+#   docker compose -f deploy/docker-compose.yml up -d --build                 # core (default)
+#   docker compose -f deploy/docker-compose.yml --profile edge up -d          # + station LUS-0001 edge + PTS simulator
+#   docker compose -f deploy/docker-compose.yml --profile observability up -d # + Prometheus/Grafana/exporter
+#
+# Profiles: services without a profile form the "core" stack and always start.
+# "edge" adds a simulated station; "observability" adds monitoring.
+# See deploy/README.md for the runbook.
+
+name: fms
+
+x-app-env: &app-env
+  DATABASE_URL: postgres://${PG_USER:-fms}:${PG_PASSWORD:-fms-dev-password}@pg-primary:5432/${PG_DB:-fms}
+  DATABASE_URL_RO: postgres://${PG_USER:-fms}:${PG_PASSWORD:-fms-dev-password}@pg-replica:5432/${PG_DB:-fms}
+  JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-change-me-0123456789abcdef}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  NODE_ENV: ${NODE_ENV:-production}
+  TZ: Africa/Lusaka
+
+x-zra-env: &zra-env
+  ZRA_VSDC_URL: ${ZRA_VSDC_URL:-http://mock-vsdc:8200}
+  ZRA_TPIN: ${ZRA_TPIN:-1000000000}
+  ZRA_BHF_ID: ${ZRA_BHF_ID:-000}
+  ZRA_DEVICE_SERIAL: ${ZRA_DEVICE_SERIAL:-FMS-DEV-0001}
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+# Node-based HTTP probe (works in any node:20 image, no curl/wget required).
+x-node-health: &node-health
+  interval: 10s
+  timeout: 5s
+  retries: 6
+  start_period: 30s
+
+x-app-depends: &app-depends
+  pg-primary: { condition: service_healthy }
+  migrate: { condition: service_completed_successfully }
+
+services:
+  # ---------------------------------------------------------------- database
+  pg-primary:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PG_USER:-fms}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-fms-dev-password}
+      POSTGRES_DB: ${PG_DB:-fms}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+      REPLICATION_USER: ${PG_REPLICATION_USER:-replicator}
+      REPLICATION_PASSWORD: ${PG_REPLICATION_PASSWORD:-replicator-dev-password}
+      TZ: UTC
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - wal_keep_size=256MB
+      - -c
+      - hot_standby=on
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - max_connections=300
+    volumes:
+      - pg-primary-data:/var/lib/postgresql/data
+      - ./postgres/primary-init.sh:/docker-entrypoint-initdb.d/10-replication.sh:ro
+    ports: ["${PG_PORT:-5432}:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+
+  pg-replica:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    user: postgres
+    entrypoint: ["/bin/sh", "/replica-entrypoint.sh"]
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      PRIMARY_HOST: pg-primary
+      REPLICATION_USER: ${PG_REPLICATION_USER:-replicator}
+      REPLICATION_PASSWORD: ${PG_REPLICATION_PASSWORD:-replicator-dev-password}
+    volumes:
+      - pg-replica-data:/var/lib/postgresql/data
+      - ./postgres/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+    ports: ["${PG_REPLICA_PORT:-5433}:5432"]
+    depends_on:
+      pg-primary: { condition: service_healthy }
+    healthcheck:
+      # Healthy only once it is streaming in recovery (hot standby).
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-fms} -d ${PG_DB:-fms} && psql -U ${PG_USER:-fms} -d ${PG_DB:-fms} -tAc 'select pg_is_in_recovery()' | grep -q t"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    logging: *logging
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/migrate/Dockerfile
+    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/migrate:${TAG:-dev}
+    command: ["--seed"]   # demo seed (dev only). `make migrate` runs without it.
+    environment:
+      DATABASE_URL: postgres://${PG_USER:-fms}:${PG_PASSWORD:-fms-dev-password}@pg-primary:5432/${PG_DB:-fms}
+    depends_on:
+      pg-primary: { condition: service_healthy }
+    restart: "no"
+    logging: *logging
+
+  # ---------------------------------------------------------------- cloud services
+  core-api:
+    build: { context: .., dockerfile: services/core-api/Dockerfile }
+    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/core-api:${TAG:-dev}
+    deploy: { replicas: 2 }
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      PORT: "8080"
+    depends_on:
+      <<: *app-depends
+      pg-replica: { condition: service_healthy }
+    healthcheck:
+      <<: *node-health
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    logging: *logging
+
+  ingest-api:
+    build: { context: .., dockerfile: services/ingest-api/Dockerfile }
+    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/ingest-api:${TAG:-dev}
+    deploy: { replicas: 2 }
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      PORT: "8081"
+    depends_on: *app-depends
+    healthcheck:
+      <<: *node-health
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    logging: *logging
+
+  fiscal-worker:
+    build: { context: .., dockerfile: services/fiscal-worker/Dockerfile }
+    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/fiscal-worker:${TAG:-dev}
+    deploy: { replicas: 2 }
+    restart: unless-stopped
+    environment:
+      <<: [*app-env, *zra-env]
+      PORT: "9464"
+      METRICS_PORT: "9464"
+    depends_on:
+      <<: *app-depends
+      mock-vsdc: { condition: service_healthy }
+    healthcheck:
+      <<: *node-health
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9464/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    logging: *logging
+
+  mock-vsdc:
+    # Same image family as fiscal-worker; packages/zra-client ships the mock
+    # VSDC CLI. ASSUMPTION: the fiscal-worker image contains /app/packages/zra-client.
+    build: { context: .., dockerfile: services/fiscal-worker/Dockerfile }
+    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/fiscal-worker:${TAG:-dev}
+    entrypoint: ["node"]
+    command: ["/app/packages/zra-client/bin/mock-vsdc.js"]
+    restart: unless-stopped
+    environment:
+      PORT: "8200"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports: ["${MOCK_VSDC_PORT:-8200}:8200"]
+    healthcheck:
+      <<: *node-health
+      test: ["CMD", "node", "-e", "require('net').connect(8200,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+    logging: *logging
+
+  analytics:
+    build: { context: ../services/analytics, dockerfile: Dockerfile }
+    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/analytics:${TAG:-dev}
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      PORT: "8090"
+    depends_on:
+      <<: *app-depends
+      pg-replica: { condition: service_healthy }
+    healthcheck:
+      <<: *node-health
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=4).status==200 else 1)"]
+    logging: *logging
+
+  web:
+    build: { context: ../apps/web, dockerfile: Dockerfile }
+    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/web:${TAG:-dev}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging: *logging
+
+  proxy:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports: ["${HTTP_PORT:-8000}:80"]
+    depends_on:
+      core-api: { condition: service_healthy }
+      ingest-api: { condition: service_healthy }
+      analytics: { condition: service_healthy }
+      web: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    logging: *logging
+
+  # ---------------------------------------------------------------- edge (station LUS-0001)
+  edge-db:
+    profiles: [edge]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: edge
+      POSTGRES_PASSWORD: ${EDGE_PG_PASSWORD:-edge-dev-password}
+      POSTGRES_DB: edge
+    volumes:
+      - edge-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U edge -d edge"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+
+  edge-gateway:
+    profiles: [edge]
+    build: { context: .., dockerfile: services/edge-gateway/Dockerfile }
+    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/edge-gateway:${TAG:-dev}
+    restart: unless-stopped
+    environment:
+      <<: *zra-env
+      DATABASE_URL: postgres://edge:${EDGE_PG_PASSWORD:-edge-dev-password}@edge-db:5432/edge
+      EDGE_PTS_PORT: "8100"
+      EDGE_UI_PORT: "8101"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: Africa/Lusaka
+      STATION_CODE: LUS-0001
+      STATION_NAME: Zambezi Cairo Road
+      GATEWAY_CODE: GW-LUS-0001
+      GATEWAY_KEY: ${EDGE_GATEWAY_KEY:-gwLUS001.dev-gateway-key-lus-0001}
+      PTS_ID: "003B00265030500420303531"
+      PTS_SECRET: ${EDGE_PTS_SECRET:-devsecret-lus-0001}
+      # Gateway appends /ingest/v1/edge/batches itself.
+      CLOUD_INGEST_URL: ${CLOUD_INGEST_URL:-http://proxy}
+      FISCAL_DRIVER: zra
+      PRINTER_DRIVER: ${EDGE_PRINTER_DRIVER:-console}
+      HA_MODE: always
+    # The gateway does not hard-depend on the cloud: it buffers in its outbox
+    # while the proxy/ingest-api are down (try `docker compose stop proxy`).
+    depends_on:
+      edge-db: { condition: service_healthy }
+      mock-vsdc: { condition: service_healthy }
+    ports:
+      - "${EDGE_PTS_PORT:-8100}:8100"
+      - "${EDGE_UI_PORT:-8101}:8101"
+    healthcheck:
+      <<: *node-health
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8100/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    logging: *logging
+
+  pts-simulator:
+    profiles: [edge]
+    build:
+      context: ..
+      dockerfile: deploy/pts-simulator/Dockerfile
+    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/pts-simulator:${TAG:-dev}
+    restart: unless-stopped
+    command: >-
+      --url ${SIM_URL:-http://edge-gateway:8100/jsonPTS}
+      --pts-id 003B00265030500420303531
+      --secret ${EDGE_PTS_SECRET:-devsecret-lus-0001}
+      ${SIM_EXTRA_ARGS:-}
+    depends_on:
+      edge-gateway: { condition: service_healthy }
+    logging: *logging
+
+  # ---------------------------------------------------------------- observability
+  postgres-exporter:
+    profiles: [observability]
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    restart: unless-stopped
+    command: ["--extend.query-path=/etc/postgres-exporter/queries.yaml"]
+    environment:
+      DATA_SOURCE_NAME: postgresql://${PG_USER:-fms}:${PG_PASSWORD:-fms-dev-password}@pg-primary:5432/${PG_DB:-fms}?sslmode=disable
+    volumes:
+      - ./monitoring/postgres-exporter-queries.yaml:/etc/postgres-exporter/queries.yaml:ro
+    depends_on:
+      pg-primary: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    logging: *logging
+
+  prometheus:
+    profiles: [observability]
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports: ["${PROMETHEUS_PORT:-9090}:9090"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9090/-/ready || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    logging: *logging
+
+  grafana:
+    profiles: [observability]
+    image: grafana/grafana:11.3.1
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/fms-overview.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["${GRAFANA_PORT:-3000}:3000"]
+    depends_on:
+      prometheus: { condition: service_healthy }
+    logging: *logging
+
+volumes:
+  pg-primary-data:
+  pg-replica-data:
+  edge-db-data:
+  prometheus-data:
+  grafana-data:

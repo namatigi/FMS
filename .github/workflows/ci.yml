@@ -1,0 +1,362 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  PYTHON_VERSION: "3.12"
+  REGISTRY: ghcr.io
+
+jobs:
+  # ------------------------------------------------------------------ shared
+  shared:
+    name: packages/shared
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install, typecheck, test, build
+        working-directory: packages/shared
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm run typecheck --if-present
+          npm test --if-present
+          npm run build --if-present
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shared-dist
+          path: packages/shared/dist
+          if-no-files-found: ignore
+
+  # ------------------------------------------------------------------ node packages / services
+  node:
+    name: ${{ matrix.path }}
+    needs: shared
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        path:
+          - packages/zra-client
+          - packages/fiscal-printer
+          - services/core-api
+          - services/ingest-api
+          - services/fiscal-worker
+          - services/edge-gateway
+          - tools/pts-simulator
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fms
+          POSTGRES_PASSWORD: fms
+          POSTGRES_DB: fms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fms -d fms"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://fms:fms@localhost:5432/fms
+      DATABASE_URL_RO: postgres://fms:fms@localhost:5432/fms
+      TEST_DATABASE_URL: postgres://fms:fms@localhost:5432/fms
+      JWT_SECRET: ci-only-jwt-secret-0123456789abcdef
+      LOG_LEVEL: warn
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Skip if component not present yet
+        id: present
+        run: |
+          if [ -f "${{ matrix.path }}/package.json" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "ok=false" >> "$GITHUB_OUTPUT"; echo "::notice::${{ matrix.path }} has no package.json, skipping"; fi
+      - name: Build local file-linked packages
+        if: steps.present.outputs.ok == 'true'
+        run: |
+          for p in packages/shared packages/zra-client packages/fiscal-printer; do
+            [ -f "$p/package.json" ] || continue
+            [ "$p" = "${{ matrix.path }}" ] && continue
+            (cd "$p" && { [ -f package-lock.json ] && npm ci || npm install; } && npm run build --if-present)
+          done
+      - name: Migrate database
+        if: steps.present.outputs.ok == 'true'
+        run: |
+          npm ci --ignore-scripts
+          node db/migrate.mjs --seed
+      - name: Install
+        if: steps.present.outputs.ok == 'true'
+        working-directory: ${{ matrix.path }}
+        run: if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: Typecheck
+        if: steps.present.outputs.ok == 'true'
+        working-directory: ${{ matrix.path }}
+        run: npm run typecheck --if-present
+      - name: Lint
+        if: steps.present.outputs.ok == 'true'
+        working-directory: ${{ matrix.path }}
+        run: npm run lint --if-present
+      - name: Test
+        if: steps.present.outputs.ok == 'true'
+        working-directory: ${{ matrix.path }}
+        run: npm test --if-present
+      - name: Build
+        if: steps.present.outputs.ok == 'true'
+        working-directory: ${{ matrix.path }}
+        run: npm run build --if-present
+
+  # ------------------------------------------------------------------ analytics (Python)
+  analytics:
+    name: services/analytics
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fms
+          POSTGRES_PASSWORD: fms
+          POSTGRES_DB: fms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fms -d fms"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://fms:fms@localhost:5432/fms
+      DATABASE_URL_RO: postgres://fms:fms@localhost:5432/fms
+      JWT_SECRET: ci-only-jwt-secret-0123456789abcdef
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip if not present
+        id: present
+        run: if [ -d services/analytics ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "ok=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/setup-node@v4
+        if: steps.present.outputs.ok == 'true'
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Migrate database
+        if: steps.present.outputs.ok == 'true'
+        run: npm ci --ignore-scripts && node db/migrate.mjs --seed
+      - uses: actions/setup-python@v5
+        if: steps.present.outputs.ok == 'true'
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/analytics/**/requirements*.txt
+      - name: Install
+        if: steps.present.outputs.ok == 'true'
+        working-directory: services/analytics
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          if [ -f pyproject.toml ]; then pip install -e ".[dev]" || pip install -e .; fi
+          pip install pytest
+      - name: pytest
+        if: steps.present.outputs.ok == 'true'
+        working-directory: services/analytics
+        run: |
+          set +e
+          pytest -q
+          rc=$?
+          # exit code 5 = no tests collected
+          if [ $rc -eq 5 ]; then echo "::warning::no analytics tests collected"; exit 0; fi
+          exit $rc
+
+  # ------------------------------------------------------------------ web
+  web:
+    name: apps/web
+    needs: shared
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Build
+        run: |
+          [ -f apps/web/package.json ] || { echo "::notice::apps/web not present"; exit 0; }
+          if [ -f packages/shared/package.json ]; then (cd packages/shared && { [ -f package-lock.json ] && npm ci || npm install; } && npm run build --if-present); fi
+          cd apps/web
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm run typecheck --if-present
+          npm run lint --if-present
+          npm test --if-present
+          npm run build
+
+  # ------------------------------------------------------------------ mobile
+  mobile:
+    name: apps/mobile
+    needs: shared
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Typecheck
+        run: |
+          [ -f apps/mobile/package.json ] || { echo "::notice::apps/mobile not present"; exit 0; }
+          if [ -f packages/shared/package.json ]; then (cd packages/shared && { [ -f package-lock.json ] && npm ci || npm install; } && npm run build --if-present); fi
+          cd apps/mobile
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          if npm run | grep -q " typecheck"; then npm run typecheck; else npx --no-install tsc --noEmit; fi
+          npm test --if-present
+
+  # ------------------------------------------------------------------ infrastructure config
+  deploy-config:
+    name: deploy configs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: YAML parse
+        run: |
+          pip install pyyaml
+          python - <<'EOF'
+          import glob, sys, yaml
+          files = [f for f in glob.glob("deploy/**/*.y*ml", recursive=True)] + glob.glob(".github/workflows/*.yml")
+          bad = 0
+          for f in files:
+              try:
+                  list(yaml.safe_load_all(open(f)))
+              except Exception as e:
+                  bad += 1; print(f"{f}: {e}")
+          print(f"{len(files)} files, {bad} errors"); sys.exit(1 if bad else 0)
+          EOF
+      - name: docker compose config
+        run: docker compose -f deploy/docker-compose.yml --profile edge --profile observability config -q
+      - name: kustomize build
+        run: |
+          for o in deploy/k8s/overlays/staging deploy/k8s/overlays/production deploy/k8s/dr; do
+            echo "== $o"; kubectl kustomize "$o" > /dev/null
+          done
+
+  # ------------------------------------------------------------------ images
+  images:
+    name: image ${{ matrix.name }}
+    needs: [node, analytics, web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+      id-token: write   # keyless cosign signing
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: core-api,      context: .,                  dockerfile: services/core-api/Dockerfile }
+          - { name: ingest-api,    context: .,                  dockerfile: services/ingest-api/Dockerfile }
+          - { name: fiscal-worker, context: .,                  dockerfile: services/fiscal-worker/Dockerfile }
+          - { name: edge-gateway,  context: .,                  dockerfile: services/edge-gateway/Dockerfile }
+          - { name: analytics,     context: services/analytics, dockerfile: services/analytics/Dockerfile }
+          - { name: web,           context: apps/web,           dockerfile: apps/web/Dockerfile }
+          - { name: migrate,       context: .,                  dockerfile: deploy/migrate/Dockerfile }
+          - { name: pts-simulator, context: .,                  dockerfile: deploy/pts-simulator/Dockerfile }
+    env:
+      PUSH: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Image prefix (GHCR names must be lowercase)
+        run: echo "IMAGE_PREFIX=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/fms" >> "$GITHUB_ENV"
+      - name: Skip if Dockerfile missing
+        id: present
+        run: if [ -f "${{ matrix.dockerfile }}" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "ok=false" >> "$GITHUB_OUTPUT"; echo "::notice::${{ matrix.dockerfile }} missing, skipping"; fi
+      - uses: docker/setup-buildx-action@v3
+        if: steps.present.outputs.ok == 'true'
+      - uses: docker/metadata-action@v5
+        if: steps.present.outputs.ok == 'true'
+        id: meta
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha,format=long
+      - name: Build (load for scanning)
+        if: steps.present.outputs.ok == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          load: true
+          push: false
+          tags: fms-ci/${{ matrix.name }}:scan
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - name: Trivy scan
+        if: steps.present.outputs.ok == 'true'
+        # Pin to a verified commit SHA in your fork (supply-chain hardening).
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: fms-ci/${{ matrix.name }}:scan
+          format: sarif
+          output: trivy-${{ matrix.name }}.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+      - name: Upload Trivy results
+        if: steps.present.outputs.ok == 'true' && github.event_name != 'pull_request'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          category: trivy-${{ matrix.name }}
+      - name: Fail on fixable critical vulnerabilities
+        if: steps.present.outputs.ok == 'true'
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: fms-ci/${{ matrix.name }}:scan
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Log in to GHCR
+        if: steps.present.outputs.ok == 'true' && env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push
+        if: steps.present.outputs.ok == 'true' && env.PUSH == 'true'
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.name }}
+      - uses: sigstore/cosign-installer@v3
+        if: steps.present.outputs.ok == 'true' && env.PUSH == 'true'
+      - name: Sign image
+        if: steps.present.outputs.ok == 'true' && env.PUSH == 'true'
+        # Key-based signing (COSIGN_PRIVATE_KEY/COSIGN_PASSWORD secrets) matches
+        # the station-side `cosign verify --key` in deploy/edge/update.sh;
+        # falls back to keyless (Sigstore OIDC) when no key is configured.
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          ref="${IMAGE_PREFIX}/${{ matrix.name }}@${{ steps.push.outputs.digest }}"
+          if [ -n "$COSIGN_PRIVATE_KEY" ]; then
+            cosign sign --yes --key env://COSIGN_PRIVATE_KEY "$ref"
+          else
+            cosign sign --yes "$ref"
+          fi

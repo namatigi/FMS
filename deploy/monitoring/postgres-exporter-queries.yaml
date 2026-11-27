@@ -1,0 +1,107 @@
+# Business-level metrics derived from the FMS database (postgres_exporter
+# --extend.query-path format). Metric name = <key>_<column>, e.g.
+# fms_jobs_count{kind,status}. The same queries are shipped to CloudNativePG in
+# deploy/k8s/base/postgres/monitoring-queries.yaml, where they get a "cnpg_"
+# prefix (cnpg_fms_jobs_count). Dashboards match both: {__name__=~"(cnpg_)?fms_..."}.
+# Keep the two files in sync.
+
+fms_jobs:
+  query: |
+    SELECT kind, status,
+           count(*)::float8 AS count,
+           COALESCE(EXTRACT(EPOCH FROM now() - min(run_at) FILTER (WHERE status = 'queued' AND run_at <= now())), 0)::float8 AS oldest_ready_seconds
+    FROM fms.jobs
+    WHERE status IN ('queued', 'running', 'dead')
+    GROUP BY kind, status
+  metrics:
+    - kind:
+        usage: "LABEL"
+        description: "Job kind (fiscalise, webhook, rollup, erb_export, notify)"
+    - status:
+        usage: "LABEL"
+        description: "Job status"
+    - count:
+        usage: "GAUGE"
+        description: "Number of jobs in this state"
+    - oldest_ready_seconds:
+        usage: "GAUGE"
+        description: "Age of the oldest queued job that is due"
+
+fms_fiscal:
+  query: |
+    SELECT count(*) FILTER (WHERE fiscal_status = 'pending')::float8 AS pending,
+           count(*) FILTER (WHERE fiscal_status = 'failed')::float8  AS failed,
+           COALESCE(EXTRACT(EPOCH FROM now() - min(ended_at)), 0)::float8 AS oldest_unsigned_seconds
+    FROM fms.pump_transactions
+    WHERE fiscal_status IN ('pending', 'failed')
+  metrics:
+    - pending:
+        usage: "GAUGE"
+        description: "Pump transactions awaiting a ZRA signature"
+    - failed:
+        usage: "GAUGE"
+        description: "Pump transactions whose fiscalisation failed"
+    - oldest_unsigned_seconds:
+        usage: "GAUGE"
+        description: "Age of the oldest unsigned sale"
+
+fms_gateway:
+  query: |
+    SELECT g.gateway_code, s.code AS station_code, s.province_id::text AS province_id,
+           COALESCE(g.last_backlog, 0)::float8 AS backlog,
+           COALESCE(EXTRACT(EPOCH FROM now() - g.last_seen_at), 1e9)::float8 AS seconds_since_seen
+    FROM fms.edge_gateways g
+    JOIN fms.stations s ON s.id = g.station_id
+    WHERE s.status = 'active'
+  metrics:
+    - gateway_code:
+        usage: "LABEL"
+        description: "Edge gateway code"
+    - station_code:
+        usage: "LABEL"
+        description: "Station code"
+    - province_id:
+        usage: "LABEL"
+        description: "Province id"
+    - backlog:
+        usage: "GAUGE"
+        description: "Unsent outbox records reported by the gateway's last heartbeat"
+    - seconds_since_seen:
+        usage: "GAUGE"
+        description: "Seconds since the gateway's last heartbeat"
+
+fms_stations:
+  query: |
+    SELECT h.connectivity, s.province_id::text AS province_id, count(*)::float8 AS count
+    FROM fms.v_station_health h
+    JOIN fms.stations s ON s.id = h.station_id
+    WHERE s.status = 'active'
+    GROUP BY h.connectivity, s.province_id
+  metrics:
+    - connectivity:
+        usage: "LABEL"
+        description: "online | degraded | offline"
+    - province_id:
+        usage: "LABEL"
+        description: "Province id"
+    - count:
+        usage: "GAUGE"
+        description: "Active stations by connectivity"
+
+# Compose only (CloudNativePG exports cnpg_pg_replication_lag natively).
+fms_replication:
+  query: |
+    SELECT application_name,
+           COALESCE(EXTRACT(EPOCH FROM replay_lag), 0)::float8 AS lag_seconds,
+           COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn), 0)::float8 AS lag_bytes
+    FROM pg_stat_replication
+  metrics:
+    - application_name:
+        usage: "LABEL"
+        description: "Standby application_name"
+    - lag_seconds:
+        usage: "GAUGE"
+        description: "Replay lag of the standby in seconds"
+    - lag_bytes:
+        usage: "GAUGE"
+        description: "Replay lag of the standby in bytes of WAL"

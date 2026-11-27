@@ -1,0 +1,35 @@
+{
+  "name": "@fms/zra-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ZRA Smart Invoice (VSDC) client and in-process mock VSDC for the National Fuel Monitoring System",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "mock-vsdc": "bin/mock-vsdc.js"
+  },
+  "files": ["dist", "bin"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test dist/",
+    "mock": "node bin/mock-vsdc.js"
+  },
+  "dependencies": {
+    "@fms/shared": "file:../../packages/shared"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

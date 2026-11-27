@@ -1,0 +1,78 @@
+# Staging: same topology as production, smaller sizing, ZRA sandbox,
+# Let's Encrypt staging issuer. Images track the main branch.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fms-staging
+resources:
+  - ../../base
+# Base maps the fms/<name> placeholders to ghcr.io/oxoafrica/fms/<name>; overlays match on that.
+images:
+  - { name: ghcr.io/oxoafrica/fms/core-api, newTag: main }
+  - { name: ghcr.io/oxoafrica/fms/ingest-api, newTag: main }
+  - { name: ghcr.io/oxoafrica/fms/fiscal-worker, newTag: main }
+  - { name: ghcr.io/oxoafrica/fms/analytics, newTag: main }
+  - { name: ghcr.io/oxoafrica/fms/web, newTag: main }
+  - { name: ghcr.io/oxoafrica/fms/migrate, newTag: main }
+configMapGenerator:
+  - name: fms-config
+    behavior: merge
+    literals:
+      - LOG_LEVEL=debug
+      - ZRA_VSDC_URL=https://vsdc-sandbox.example.zra.org.zm
+patches:
+  - target: { kind: Ingress }
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: staging.fms.example.zm
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: staging.fms.example.zm
+      - op: replace
+        path: /spec/tls/0/secretName
+        value: fms-staging-tls
+  - target: { kind: Ingress, name: fms-web-api }
+    patch: |-
+      - op: replace
+        path: /metadata/annotations/cert-manager.io~1cluster-issuer
+        value: letsencrypt-staging
+  - target: { kind: Cluster, name: fms-pg }
+    patch: |-
+      - op: replace
+        path: /spec/storage/size
+        value: 50Gi
+      - op: replace
+        path: /spec/walStorage/size
+        value: 20Gi
+      - op: replace
+        path: /spec/resources
+        value: { requests: { cpu: "500m", memory: 2Gi }, limits: { memory: 2Gi } }
+      - op: replace
+        path: /spec/postgresql/parameters/shared_buffers
+        value: 512MB
+      - op: replace
+        path: /spec/postgresql/parameters/effective_cache_size
+        value: 1536MB
+  - target: { kind: ObjectStore, name: fms-pg-backup }
+    patch: |-
+      - op: replace
+        path: /spec/configuration/destinationPath
+        value: s3://fms-pg-backups-staging/fms-pg
+      - op: replace
+        path: /spec/retentionPolicy
+        value: 7d
+  - target: { kind: HorizontalPodAutoscaler }
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+  - target: { kind: Deployment, name: "core-api|ingest-api" }
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - target: { kind: PodDisruptionBudget, name: "core-api|ingest-api" }
+    patch: |-
+      - op: replace
+        path: /spec/minAvailable
+        value: 1

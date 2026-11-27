@@ -1,0 +1,77 @@
+# DR site: CloudNativePG *replica cluster* fed from the primary site's WAL
+# archive (no direct network path between sites required). Apply in the DR
+# Kubernetes cluster:  kubectl apply -k deploy/k8s/dr
+#
+# Normal operation: fms-pg-dr is a read-only "designated primary" that keeps
+# replaying WAL from s3://fms-pg-backups/fms-pg (lag ~ archive_timeout, 5 min).
+# Promotion (DR switchover): see deploy/README.md "DR switchover"; in short,
+# set spec.replica.enabled=false (or, with the CNPG >= 1.25 distributed
+# topology, set spec.replica.primary: fms-pg-dr on both sites), then point
+# DNS for fms.example.zm at the DR ingress. Edges buffer meanwhile.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: fms-pg-origin-store
+spec:
+  configuration:
+    # Primary site's archive, read-only for this cluster.
+    destinationPath: s3://fms-pg-backups/fms-pg
+    endpointURL: https://s3.example.zm
+    s3Credentials:
+      accessKeyId: { name: fms-backup-s3, key: ACCESS_KEY_ID }
+      secretAccessKey: { name: fms-backup-s3, key: ACCESS_SECRET_KEY }
+    wal: { compression: gzip, encryption: AES256, maxParallel: 8 }
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: fms-pg-dr-store
+spec:
+  retentionPolicy: "30d"
+  configuration:
+    # DR site's own archive (used after promotion; second region / DC bucket).
+    destinationPath: s3://fms-pg-backups-dr/fms-pg-dr
+    endpointURL: https://s3.dr.example.zm
+    s3Credentials:
+      accessKeyId: { name: fms-backup-s3-dr, key: ACCESS_KEY_ID }
+      secretAccessKey: { name: fms-backup-s3-dr, key: ACCESS_SECRET_KEY }
+    wal: { compression: gzip, encryption: AES256, maxParallel: 8 }
+    data: { compression: gzip, encryption: AES256, jobs: 4 }
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: fms-pg-dr
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:16
+  enableSuperuserAccess: false
+  storage: { size: 1Ti, storageClass: fast-ssd }
+  walStorage: { size: 200Gi, storageClass: fast-ssd }
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: topology.kubernetes.io/zone
+    podAntiAffinityType: preferred
+
+  replica:
+    enabled: true
+    source: fms-pg-origin
+
+  bootstrap:
+    recovery:
+      source: fms-pg-origin
+
+  # WAL archiver for this cluster once promoted.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: fms-pg-dr-store
+
+  externalClusters:
+    - name: fms-pg-origin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: fms-pg-origin-store
+          serverName: fms-pg

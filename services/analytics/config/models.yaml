@@ -1,0 +1,47 @@
+# Custom AI model registry (MODELS_CONFIG). See README "Bring your own model".
+#
+# type: python -> entrypoint "package.module:function", called fn(inputs) or fn(inputs, ctx)
+#                 (ctx.db.fetch_all(sql, params) gives read-only database access).
+#                 Extra import paths: MODELS_PYTHONPATH (os.pathsep-separated).
+# type: http   -> POST {"inputs": {...}} to url; reply {"outputs": {...}} (or MLflow
+#                 {"predictions": [...]}). ${ENV_VAR} is expanded in url and headers.
+models:
+  reserve_risk:
+    type: python
+    entrypoint: fms_analytics.example_models.reserve_risk:predict
+    version: "1.0.0"
+    description: Probability of national stock-out per product before the next resupply (example).
+    timeout_s: 20
+    tags: [reserve, example]
+    input_schema:
+      properties:
+        product_code: {type: string}
+        days_of_cover: {type: number}
+        demand_cv: {type: number}
+
+  pricing:
+    type: python
+    entrypoint: fms_analytics.example_models.pricing_model:predict
+    version: "1.0.0"
+    description: Linear trend of national volume-weighted pump price (example).
+    timeout_s: 10
+    tags: [pricing, example]
+    input_schema:
+      required: [product_code]
+      properties:
+        product_code: {type: string}
+        horizon_days: {type: integer}
+        lookback_days: {type: integer}
+
+  # Example of a model served elsewhere (MLflow, BentoML, KServe, a ministry server...).
+  # Disabled: documentation only.
+  demand_mlflow:
+    type: http
+    url: http://mlflow-models:5001/invocations
+    headers:
+      Authorization: "Bearer ${MLFLOW_TOKEN}"
+    timeout_s: 5
+    version: "external"
+    description: Example external demand model behind an MLflow-compatible endpoint (disabled).
+    enabled: false
+    tags: [demand, external, example]

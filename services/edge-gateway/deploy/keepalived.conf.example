@@ -1,0 +1,42 @@
+# /etc/keepalived/keepalived.conf on the PRIMARY gateway.
+# On the STANDBY use: state BACKUP, priority 100, router_id FMS_EDGE_STANDBY.
+# The PTS-2 REMOTE SERVER SETTINGS point at the virtual IP 192.168.1.10, port 8100, URI jsonPTS.
+global_defs {
+    router_id FMS_EDGE_PRIMARY
+    enable_script_security
+    script_user root
+}
+
+# Healthy = gateway process up and its local Postgres reachable.
+vrrp_script chk_fms_edge {
+    script "/usr/bin/curl -fsS --max-time 2 http://127.0.0.1:8101/readyz"
+    interval 2
+    timeout 3
+    fall 3
+    rise 2
+}
+
+vrrp_instance FMS_EDGE {
+    state MASTER
+    interface eth0
+    virtual_router_id 51
+    priority 150
+    advert_int 1
+    # No automatic fail-back (avoids flapping and keeps one gateway signing a burst of sales).
+    # nopreempt requires "state BACKUP" on both nodes; use it once both are commissioned.
+    # nopreempt
+    authentication {
+        auth_type PASS
+        auth_pass fmsedge1
+    }
+    virtual_ipaddress {
+        192.168.1.10/24 dev eth0
+    }
+    track_script {
+        chk_fms_edge
+    }
+    # Only needed with HA_MODE=file (HA_MODE=vip detects the VIP on the interface by itself)
+    notify_master "/opt/fms/services/edge-gateway/deploy/ha-notify.sh MASTER"
+    notify_backup "/opt/fms/services/edge-gateway/deploy/ha-notify.sh BACKUP"
+    notify_fault  "/opt/fms/services/edge-gateway/deploy/ha-notify.sh FAULT"
+}

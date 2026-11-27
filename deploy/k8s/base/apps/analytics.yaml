@@ -1,0 +1,142 @@
+# analytics: forecasting, reserve, anomalies, pricing, custom AI model registry (Python).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics
+  labels: &labels
+    app.kubernetes.io/name: analytics
+    app.kubernetes.io/part-of: fms
+    app.kubernetes.io/component: analytics
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: analytics
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      serviceAccountName: fms-app
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: analytics }
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: analytics }
+      containers:
+        - name: analytics
+          image: fms/analytics
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8090 }
+          envFrom:
+            - configMapRef: { name: fms-config }
+          env:
+            - name: PORT
+              value: "8090"
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: fms-pg-app, key: username } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: fms-pg-app, key: password } }
+            - name: DATABASE_URL
+              value: postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST_RW):5432/$(DB_NAME)?sslmode=require
+            - name: DATABASE_URL_RO
+              value: postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST_RO):5432/$(DB_NAME)?sslmode=require
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: fms-app-secrets, key: JWT_SECRET } }
+            - name: MODEL_REGISTRY_PATH
+              value: /etc/fms/models/models.yaml
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          lifecycle:
+            # Let the ingress controller drop the endpoint before SIGTERM.
+            preStop: { sleep: { seconds: 5 } }
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { cpu: "2", memory: 2Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: models, mountPath: /etc/fms/models, readOnly: true }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 1Gi }
+        - name: models
+          configMap: { name: analytics-models, optional: true }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics
+  labels:
+    app.kubernetes.io/name: analytics
+    app.kubernetes.io/part-of: fms
+spec:
+  selector:
+    app.kubernetes.io/name: analytics
+  ports:
+    - { name: http, port: 8090, targetPort: http }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: analytics
+spec:
+  minAvailable: 1
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels: { app.kubernetes.io/name: analytics }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: analytics
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: analytics }
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies: [{ type: Pods, value: 1, periodSeconds: 60 }]
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies: [{ type: Percent, value: 100, periodSeconds: 60 }]

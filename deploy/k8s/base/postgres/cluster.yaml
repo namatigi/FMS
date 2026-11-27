@@ -1,0 +1,154 @@
+# CloudNativePG cluster: 1 primary + 2 standbys, one synchronous standby in
+# another zone (RPO ~ 0), automatic failover (RTO < 60 s), continuous WAL
+# archiving + base backups to S3-compatible storage via the Barman Cloud
+# plugin (CNPG >= 1.26 with plugin-barman-cloud installed in cnpg-system).
+#
+# Legacy alternative (in-tree, deprecated in CNPG 1.26): replace spec.plugins
+# with spec.backup.barmanObjectStore { destinationPath, endpointURL,
+# s3Credentials, wal, data } + spec.backup.retentionPolicy: "30d", and use
+# method: barmanObjectStore in the ScheduledBackup.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: fms-pg
+  labels:
+    app.kubernetes.io/part-of: fms
+spec:
+  description: FMS central database (PostgreSQL 16)
+  instances: 3
+  # Pin to a digest in production overlays.
+  imageName: ghcr.io/cloudnative-pg/postgresql:16
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover
+  enableSuperuserAccess: false
+
+  # Quorum-based synchronous replication: every commit is confirmed by
+  # exactly one standby before success is returned.
+  # (CNPG >= 1.24 also offers postgresql.synchronous {method, number,
+  # dataDurability}; do not set both.)
+  minSyncReplicas: 1
+  maxSyncReplicas: 1
+
+  replicationSlots:
+    highAvailability:
+      enabled: true
+    updateInterval: 30
+
+  postgresql:
+    parameters:
+      max_connections: "400"
+      shared_buffers: 4GB
+      effective_cache_size: 12GB
+      maintenance_work_mem: 1GB
+      work_mem: 16MB
+      wal_compression: "on"
+      max_wal_size: 8GB
+      min_wal_size: 2GB
+      wal_keep_size: 4GB
+      max_slot_wal_keep_size: 64GB
+      checkpoint_completion_target: "0.9"
+      random_page_cost: "1.1"
+      timezone: UTC
+      log_min_duration_statement: "1000"
+      log_checkpoints: "on"
+      log_lock_waits: "on"
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: all
+      archive_timeout: 5min
+    # The synchronous standby must be in a different zone from the primary.
+    syncReplicaElectionConstraint:
+      enabled: true
+      nodeLabelsAntiAffinity:
+        - topology.kubernetes.io/zone
+
+  bootstrap:
+    initdb:
+      database: fms
+      owner: fms
+      dataChecksums: true
+      encoding: UTF8
+      localeCollate: C.UTF-8
+      localeCType: C.UTF-8
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS pgcrypto
+        - CREATE EXTENSION IF NOT EXISTS citext
+        - CREATE EXTENSION IF NOT EXISTS pg_stat_statements
+
+  storage:
+    size: 200Gi
+    storageClass: fast-ssd
+  walStorage:
+    size: 50Gi
+    storageClass: fast-ssd
+
+  resources:
+    requests: { cpu: "2", memory: 8Gi }
+    limits: { memory: 8Gi }
+
+  # Spread instances across zones. "preferred" works with 2 zones (design
+  # baseline: 2 AZs / 2 data centres); the production overlay switches to
+  # "required", which needs >= 3 zones for 3 instances.
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: topology.kubernetes.io/zone
+    podAntiAffinityType: preferred
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels: { cnpg.io/cluster: fms-pg }
+
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: fms-pg-backup
+
+  monitoring:
+    customQueriesConfigMap:
+      - name: fms-pg-monitoring
+        key: queries
+
+  failoverDelay: 0
+  switchoverDelay: 60
+  stopDelay: 300
+  smartShutdownTimeout: 60
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: fms-pg-backup
+spec:
+  # Base backups + WAL older than the window are pruned automatically.
+  retentionPolicy: "30d"
+  configuration:
+    destinationPath: s3://fms-pg-backups/fms-pg
+    endpointURL: https://s3.example.zm
+    s3Credentials:
+      accessKeyId: { name: fms-backup-s3, key: ACCESS_KEY_ID }
+      secretAccessKey: { name: fms-backup-s3, key: ACCESS_SECRET_KEY }
+    wal:
+      compression: gzip
+      encryption: AES256
+      maxParallel: 8
+    data:
+      compression: gzip
+      encryption: AES256
+      jobs: 4
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: fms-pg-daily
+spec:
+  # Six-field cron (seconds first): every day at 01:00 UTC (03:00 Lusaka).
+  schedule: "0 0 1 * * *"
+  immediate: true
+  backupOwnerReference: self
+  target: prefer-standby
+  cluster:
+    name: fms-pg
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

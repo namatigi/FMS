@@ -1,0 +1,74 @@
+# ---------------------------------------------------------------------------
+# ILLUSTRATIVE DEFAULTS ONLY - NOT OFFICIAL ERB / ZRA / MoF FIGURES.
+# These numbers exist so that POST /analytics/v1/pricing/simulate returns a
+# plausible cost build-up out of the box. Replace them with the figures from
+# the ERB pricing model in force (or pass overrides in the request body) before
+# using any result for decisions. Point PRICING_CONFIG at your own copy.
+# ---------------------------------------------------------------------------
+disclaimer: >-
+  Illustrative cost build-up. Default parameters are NOT official ERB, ZRA or
+  Ministry of Finance figures; override them with the values in force.
+currency: ZMW
+fx_rate_zmw_per_usd: 27.0
+
+products:
+  PETROL:
+    fob_usd_per_mt: 780.0
+    density_kg_l: 0.74
+    freight_usd_per_mt: 95.0
+    insurance_pct: 0.5          # % of (FOB + freight)
+  DIESEL:
+    fob_usd_per_mt: 740.0
+    density_kg_l: 0.84
+    freight_usd_per_mt: 90.0
+    insurance_pct: 0.5
+  KEROSENE:
+    fob_usd_per_mt: 760.0
+    density_kg_l: 0.80
+    freight_usd_per_mt: 90.0
+    insurance_pct: 0.5
+  JETA1:
+    fob_usd_per_mt: 790.0
+    density_kg_l: 0.80
+    freight_usd_per_mt: 90.0
+    insurance_pct: 0.5
+  LPG:
+    fob_usd_per_mt: 600.0
+    density_kg_l: 0.54
+    freight_usd_per_mt: 120.0
+    insurance_pct: 0.5
+
+# Supply-chain costs after the border (ZMW per litre).
+supply_chain:
+  storage_and_handling: 0.35
+  pipeline_or_road_transport: 0.80
+  losses_allowance: 0.10
+
+# Taxes and levies. type: per_litre (ZMW/L) or pct (applied to the subtotal
+# before VAT). VAT is applied last on the full pre-VAT price.
+taxes:
+  customs_duty:              {type: pct, value: 5.0}
+  excise_duty:               {type: per_litre, value: 2.10}
+  fuel_levy:                 {type: per_litre, value: 1.10}
+  road_levy:                 {type: per_litre, value: 0.60}
+  strategic_reserve_fund:    {type: per_litre, value: 0.30}
+  erb_regulatory_levy:       {type: per_litre, value: 0.10}
+  rural_electrification_levy: {type: per_litre, value: 0.05}
+
+vat_pct: 16.0
+
+# Margins (ZMW per litre).
+margins:
+  omc_margin: 1.40
+  dealer_margin: 1.10
+
+# Per-product overrides of any block above, e.g. kerosene excise relief.
+product_overrides:
+  KEROSENE:
+    taxes:
+      excise_duty: {type: per_litre, value: 0.0}
+  LPG:
+    taxes:
+      excise_duty: {type: per_litre, value: 0.0}
+      fuel_levy:   {type: per_litre, value: 0.0}
+      road_levy:   {type: per_litre, value: 0.0}
