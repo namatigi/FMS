@@ -1,8 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, View } from 'react-native';
-import Svg, { G, Rect, Text as SvgText } from 'react-native-svg';
-import { clampPct, formatDaysOfCover, formatLitres, formatMm, formatPct, formatRelative, formatTemp, productLabel, toNum } from '../lib/format';
-import type { Tank } from '../api/types';
+import Svg, { G, Path, Rect, Text as SvgText } from 'react-native-svg';
+import {
+  clampPct,
+  formatDaysOfCover,
+  formatLitres,
+  formatMm,
+  formatNumber,
+  formatPct,
+  formatRelative,
+  formatTemp,
+  formatZmw,
+  productLabel,
+  toNum,
+} from '../lib/format';
+import type { Pump, Tank } from '../api/types';
 import { font, fuelColor, radius, space, useTheme } from '../theme';
 import { Badge, Card, KV, Row, T } from './ui';
 
@@ -133,6 +145,78 @@ export function TankCard({ tank, testID }: { tank: Partial<Tank>; testID?: strin
       ) : null}
       <T variant="small">
         Probe {tank.probe_status ?? 'unknown'} · measured {formatRelative(tank.measured_at)}
+      </T>
+    </Card>
+  );
+}
+
+/** Fuel dispenser drawing: the pump number on its display and one holster per nozzle, coloured by product. */
+export function PumpIllustration({ pump, width = 64 }: { pump: Pump; width?: number }) {
+  const t = useTheme();
+  const nozzles = [...pump.nozzles].sort((a, b) => a.nozzle_no - b.nozzle_no);
+  const slots = Math.max(1, nozzles.length);
+  const w = 52 / slots;
+  return (
+    <Svg width={width} height={(width * 150) / 96} viewBox="0 0 96 150" accessibilityLabel={`Pump ${pump.pump_no} illustration`}>
+      <Rect x={10} y={4} width={76} height={12} rx={4} fill="#F59E0B" />
+      <Rect x={14} y={16} width={68} height={120} rx={6} fill={t.surfaceAlt} stroke={t.border} strokeWidth={2} />
+      <Rect x={22} y={24} width={52} height={30} rx={4} fill="#0F172A" />
+      <SvgText x={48} y={46} fontSize={20} fontWeight="700" fill="#FBBF24" textAnchor="middle">
+        {String(pump.pump_no)}
+      </SvgText>
+      {nozzles.map((n, i) => {
+        const x = 22 + i * w + w / 2;
+        return (
+          <G key={n.nozzle_no}>
+            <Rect x={x - 6} y={66} width={12} height={30} rx={3} fill={fuelColor(t, n.product_code ?? undefined)} />
+            <SvgText x={x} y={108} fontSize={10} fontWeight="600" fill={t.textMuted} textAnchor="middle">
+              {String(n.nozzle_no)}
+            </SvgText>
+          </G>
+        );
+      })}
+      <Path d="M82 70 q 12 10 6 40" stroke={t.textMuted} strokeWidth={3} strokeLinecap="round" fill="none" />
+      <Rect x={6} y={136} width={84} height={10} rx={3} fill={t.border} />
+    </Svg>
+  );
+}
+
+/** Pump card: drawing, tanks it draws from, and each nozzle's volume and amount totalizers. */
+export function PumpCard({ pump, testID }: { pump: Pump; testID?: string }) {
+  const t = useTheme();
+  const nozzles = [...pump.nozzles].sort((a, b) => a.nozzle_no - b.nozzle_no);
+  const tanks = [...new Set(nozzles.map((n) => n.tank_no).filter((x): x is number => x != null))].sort((a, b) => a - b);
+  return (
+    <Card testID={testID} accessibilityLabel={`Pump ${pump.pump_no}`}>
+      <Row style={{ justifyContent: 'space-between' }}>
+        <T variant="h2">
+          Pump {pump.pump_no}
+          {tanks.length ? ` · Tank${tanks.length > 1 ? 's' : ''} ${tanks.join(', ')}` : ''}
+        </T>
+        {!pump.configured ? <Badge label="NOT CONFIGURED" color={t.warning} /> : null}
+      </Row>
+      <Row gap={space.lg} style={{ alignItems: 'flex-start' }}>
+        <PumpIllustration pump={pump} />
+        <View style={{ flex: 1, gap: space.sm }}>
+          {nozzles.map((n) => (
+            <View key={n.nozzle_no} testID={testID ? `${testID}-nozzle-${n.nozzle_no}` : undefined} style={{ gap: 2 }}>
+              <Row>
+                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: fuelColor(t, n.product_code ?? undefined) }} />
+                <T style={{ fontWeight: '700', flex: 1 }}>
+                  Nozzle {n.nozzle_no} · {n.grade_name ?? (n.product_code ? productLabel(n.product_code) : '—')}
+                  {n.tank_no != null ? ` · Tank ${n.tank_no}` : ''}
+                </T>
+              </Row>
+              <KV k="Volume totalizer" v={n.total_volume_l == null ? '—' : `${formatNumber(n.total_volume_l, 2)} L`} />
+              <KV k="Amount totalizer" v={formatZmw(n.total_amount)} />
+              <KV k="Today" v={formatLitres(n.today_volume_l)} />
+            </View>
+          ))}
+        </View>
+      </Row>
+      <T variant="muted">
+        Today {formatLitres(pump.today_volume_l)} · {formatZmw(pump.today_amount)} · {formatNumber(pump.today_tx)} tx · last sale{' '}
+        {formatRelative(pump.last_sale_at)}
       </T>
     </Card>
   );

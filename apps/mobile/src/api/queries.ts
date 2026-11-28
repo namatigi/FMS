@@ -11,6 +11,7 @@ import type {
   ListResponse,
   PriceUpdateRequest,
   PriceUpdateResponse,
+  Pump,
   SalesSummaryRow,
   Station,
   StationDetail,
@@ -26,6 +27,7 @@ export const qk = {
   stations: (q: string) => ['stations', q] as const,
   station: (id: string) => ['station', id] as const,
   tanks: (id: string) => ['station', id, 'tanks'] as const,
+  pumps: (id: string) => ['station', id, 'pumps'] as const,
   transactions: (id: string, day: string) => ['station', id, 'transactions', day] as const,
   sales: (id: string, group: string, day: string) => ['station', id, 'sales', group, day] as const,
   deliveries: (id: string) => ['station', id, 'deliveries'] as const,
@@ -77,6 +79,16 @@ export function useTanks(id: string) {
   return useQuery({
     queryKey: qk.tanks(id),
     queryFn: async () => unwrapList(await api.get<Tank[] | ListResponse<Tank>>(`/stations/${id}/tanks`)),
+    enabled: !!id,
+    refetchInterval: AUTO_REFRESH_MS,
+  });
+}
+
+export function usePumps(id: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: qk.pumps(id),
+    queryFn: async () => unwrapList(await api.get<Pump[] | ListResponse<Pump>>(`/stations/${id}/pumps`)),
     enabled: !!id,
     refetchInterval: AUTO_REFRESH_MS,
   });
