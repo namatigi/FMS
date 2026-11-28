@@ -43,13 +43,15 @@ spec:
             matchLabels: { app.kubernetes.io/name: fiscal-worker }
       containers:
         - name: fiscal-worker
-          image: fms/fiscal-worker
+          image: fms/cloud   # Django (services/cloud); FMS_SERVICE picks the role
           imagePullPolicy: IfNotPresent
           ports:
             - { name: metrics, containerPort: 9464 }
           envFrom:
             - configMapRef: { name: fms-config }
           env:
+            - name: FMS_SERVICE
+              value: worker
             - name: PORT
               value: "9464"
             - name: METRICS_PORT

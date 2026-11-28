@@ -6,14 +6,13 @@
  *                                   └─EdgeBatch─► ingest-api ─► Postgres ◄─ core-api / analytics / fiscal-worker
  *   PTS-2 simulator ─jsonPTS (direct mode)──────► ingest-api ─► fiscal-worker ─ZRA─► mock VSDC
  *
- * Prereqs: all services built (dist/), analytics venv at services/analytics/.venv,
- * a Postgres you can create databases on (PG_ADMIN_URL, default postgres://postgres@localhost:55432).
+ * ingest-api, core-api and fiscal-worker run from the Django project in services/cloud.
  *
- *   node tools/e2e/e2e.mjs [--duration 45] [--impl ts|django]
+ * Prereqs: edge-gateway, zra-client and pts-simulator built (dist/), venvs at
+ * services/cloud/.venv and services/analytics/.venv, and a Postgres you can create
+ * databases on (PG_ADMIN_URL, default postgres://postgres@localhost:55432).
  *
- * --impl django (or E2E_IMPL=django) runs ingest-api, core-api and fiscal-worker from
- * the Django implementation in services/cloud (venv at services/cloud/.venv) instead
- * of the TypeScript builds. Everything else, and every check, stays the same.
+ *   node tools/e2e/e2e.mjs [--duration 45]
  */
 import { spawn } from 'node:child_process';
 import { mkdirSync, createWriteStream, existsSync } from 'node:fs';
@@ -28,8 +27,6 @@ const CLOUD_DB = `${ADMIN}/fms_e2e`;
 const EDGE_DB = `${ADMIN}/fms_e2e_edge`;
 const DURATION = process.argv.includes('--duration') ? Number(process.argv[process.argv.indexOf('--duration') + 1]) : 40;
 if (!Number.isFinite(DURATION) || DURATION <= 0) throw new Error('--duration must be a positive number of seconds');
-const IMPL = (process.argv.includes('--impl') ? process.argv[process.argv.indexOf('--impl') + 1] : process.env.E2E_IMPL) || 'ts';
-if (!['ts', 'django'].includes(IMPL)) throw new Error(`--impl must be ts or django (got ${IMPL})`);
 const LOGS = process.env.E2E_LOG_DIR ?? join(ROOT, 'tools/e2e/logs');
 const JWT_SECRET = 'e2e-jwt-secret-please-change-0123456789';
 const P = { vsdc: 28200, ingest: 28081, core: 28080, worker: 29464, edgePts: 28100, edgeUi: 28101, analytics: 28090 };
@@ -105,25 +102,18 @@ async function main() {
     ...common, METRICS_PORT: P.worker, ZRA_VSDC_URL: `http://localhost:${P.vsdc}`, WORKER_POLL_INTERVAL_MS: 500,
     SCHEDULER_TICK_MS: 5000, FISCAL_SWEEP_INTERVAL_MS: 10000, EXPORT_DIR: join(LOGS, 'exports'),
   };
-  console.log(`   cloud services: ${IMPL === 'django' ? 'Django (services/cloud)' : 'TypeScript'}`);
-  if (IMPL === 'django') {
-    const cloud = join(ROOT, 'services/cloud');
-    const dpy = join(cloud, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
-    if (!existsSync(dpy)) throw new Error(`no Django venv at ${dpy}`);
-    const dj = { ...common, PYTHONUNBUFFERED: '1', DJANGO_SETTINGS_MODULE: 'fms_cloud.settings' };
-    await new Promise((res, rej) => {
-      const c = spawn(dpy, ['manage.py', 'fms_core_migrate'], { cwd: cloud, env: { ...process.env, ...dj, FMS_SERVICE: 'core' }, stdio: 'inherit' });
-      c.on('exit', (code) => (code === 0 ? res() : rej(new Error(`fms_core_migrate exited ${code}`))));
-    });
-    // runserver is Django's threaded development server: fine for a single-machine test.
-    start('ingest-api', dpy, ['manage.py', 'runserver', `127.0.0.1:${P.ingest}`, '--noreload'], { ...dj, FMS_SERVICE: 'ingest', RATE_LIMIT_RPS: 0 }, cloud);
-    start('core-api', dpy, ['manage.py', 'runserver', `127.0.0.1:${P.core}`, '--noreload'], { ...dj, FMS_SERVICE: 'core' }, cloud);
-    start('fiscal-worker', dpy, ['manage.py', 'fms_worker'], { ...workerEnv, ...dj, FMS_SERVICE: 'worker' }, cloud);
-  } else {
-    start('ingest-api', node, ['services/ingest-api/dist/server.js'], { ...common, PORT: P.ingest, RATE_LIMIT_RPS: 0 });
-    start('core-api', node, ['services/core-api/dist/server.js'], { ...common, PORT: P.core });
-    start('fiscal-worker', node, ['services/fiscal-worker/dist/main.js'], workerEnv);
-  }
+  const cloudDir = join(ROOT, 'services/cloud');
+  const dpy = join(cloudDir, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+  if (!existsSync(dpy)) throw new Error(`no Django venv at ${dpy}`);
+  const dj = { ...common, PYTHONUNBUFFERED: '1', DJANGO_SETTINGS_MODULE: 'fms_cloud.settings' };
+  await new Promise((res, rej) => {
+    const c = spawn(dpy, ['manage.py', 'fms_core_migrate'], { cwd: cloudDir, env: { ...process.env, ...dj, FMS_SERVICE: 'core' }, stdio: 'inherit' });
+    c.on('exit', (code) => (code === 0 ? res() : rej(new Error(`fms_core_migrate exited ${code}`))));
+  });
+  // runserver is Django's threaded development server: fine for a single-machine test.
+  start('ingest-api', dpy, ['manage.py', 'runserver', `127.0.0.1:${P.ingest}`, '--noreload'], { ...dj, FMS_SERVICE: 'ingest', RATE_LIMIT_RPS: 0 }, cloudDir);
+  start('core-api', dpy, ['manage.py', 'runserver', `127.0.0.1:${P.core}`, '--noreload'], { ...dj, FMS_SERVICE: 'core' }, cloudDir);
+  start('fiscal-worker', dpy, ['manage.py', 'fms_worker'], { ...workerEnv, ...dj, FMS_SERVICE: 'worker' }, cloudDir);
   start('edge-gateway', node, ['services/edge-gateway/dist/main.js'], {
     DATABASE_URL: EDGE_DB, LOG_LEVEL: 'info', EDGE_PTS_PORT: P.edgePts, EDGE_UI_PORT: P.edgeUi,
     STATION_CODE: 'LUS-0001', STATION_NAME: 'Zambezi Cairo Road', GATEWAY_CODE: 'GW-LUS-0001',

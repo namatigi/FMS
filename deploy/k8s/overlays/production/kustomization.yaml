@@ -1,6 +1,6 @@
 # Production: 3 AZs, request-rate / job-backlog autoscaling, pinned images.
 # CI replaces newTag with the release tag (or digest) on every deploy:
-#   (cd deploy/k8s/overlays/production && kustomize edit set image ghcr.io/oxoafrica/fms/core-api=ghcr.io/oxoafrica/fms/core-api:v0.1.0 ...)
+#   (cd deploy/k8s/overlays/production && kustomize edit set image ghcr.io/oxoafrica/fms/cloud=ghcr.io/oxoafrica/fms/cloud:v0.1.0 ...)
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: fms
@@ -10,9 +10,7 @@ components:
   - ../../components/custom-metrics-hpa
 # Base maps the fms/<name> placeholders to ghcr.io/oxoafrica/fms/<name>; overlays match on that.
 images:
-  - { name: ghcr.io/oxoafrica/fms/core-api, newTag: v0.1.0 }
-  - { name: ghcr.io/oxoafrica/fms/ingest-api, newTag: v0.1.0 }
-  - { name: ghcr.io/oxoafrica/fms/fiscal-worker, newTag: v0.1.0 }
+  - { name: ghcr.io/oxoafrica/fms/cloud, newTag: v0.1.0 }
   - { name: ghcr.io/oxoafrica/fms/analytics, newTag: v0.1.0 }
   - { name: ghcr.io/oxoafrica/fms/web, newTag: v0.1.0 }
   - { name: ghcr.io/oxoafrica/fms/migrate, newTag: v0.1.0 }

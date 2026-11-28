@@ -1,16 +1,17 @@
 # FMS cloud services on Django (`services/cloud`)
 
-The Django implementation of the three cloud services. They used to run as TypeScript:
+The three cloud services, in Python on Django. They replaced the original TypeScript services, which were
+removed from the repo (they remain in git history):
 
-| Role (`FMS_SERVICE`) | Replaces | What it serves |
+| Role (`FMS_SERVICE`) | Replaced | What it serves |
 |---|---|---|
 | `core` | `services/core-api` | `/api/v1/...` (owner, manager, ERB, ZRA, admin), `/api/partner/v1/...`, `/api/docs` |
 | `ingest` | `services/ingest-api` | `/ingest/pts` (PTS-2 jsonPTS uploads), `/ingest/v1/edge/...` (edge gateway batches) |
 | `worker` | `services/fiscal-worker` | `manage.py fms_worker`: job queue (fiscalise, rollup, webhook, notify, erb_export) and scheduler |
 
 All three keep the **same API contracts, database, environment variables and ports** as the TypeScript
-services (`docs/api/CONTRACTS.md`, `services/core-api/openapi.json`). The web app, mobile app, edge
-gateways and analytics service don't change.
+services did (`docs/api/CONTRACTS.md`; the generated OpenAPI document is served at `/api/openapi.json`).
+The web app, mobile app, edge gateways and analytics service talk to them unchanged.
 
 ## Stack
 
@@ -82,5 +83,5 @@ Tests need a PostgreSQL 16 superuser URL (default: the compose `pg-primary` on p
 .venv\Scripts\python -m pytest
 ```
 
-In Docker the image is `services/cloud/Dockerfile`; `deploy/docker-compose.django.yml` swaps it in for the
-three TypeScript services.
+In Docker the image is `services/cloud/Dockerfile`. `deploy/docker-compose.yml` runs it three times as
+`core-api`, `ingest-api` and `fiscal-worker`, and the Kubernetes manifests do the same with `FMS_SERVICE`.

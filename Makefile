@@ -8,12 +8,9 @@ TAG       ?= dev
 SIM_ARGS  ?=
 
 NODE_PKGS := packages/shared packages/zra-client packages/fiscal-printer \
-             services/core-api services/ingest-api services/fiscal-worker \
              services/edge-gateway tools/pts-simulator apps/web apps/mobile
 
-IMAGES := core-api:.:services/core-api/Dockerfile \
-          ingest-api:.:services/ingest-api/Dockerfile \
-          fiscal-worker:.:services/fiscal-worker/Dockerfile \
+IMAGES := cloud:services/cloud:services/cloud/Dockerfile \
           edge-gateway:.:services/edge-gateway/Dockerfile \
           analytics:services/analytics:services/analytics/Dockerfile \
           web:apps/web:apps/web/Dockerfile \
@@ -52,7 +49,7 @@ migrate: ## Apply schema migrations only (no seed) to the compose primary
 seed: ## Apply migrations + demo seed (dev only)
 	$(COMPOSE) run --rm migrate --seed
 
-test: ## Typecheck + test every Node package, then analytics pytest
+test: ## Typecheck + test every Node package, then the Django cloud and analytics pytest suites
 	@set -e; for p in $(NODE_PKGS); do \
 	  if [ -f $$p/package.json ]; then \
 	    echo "==> $$p"; \
@@ -60,6 +57,7 @@ test: ## Typecheck + test every Node package, then analytics pytest
 	      npm run build --if-present && npm run typecheck --if-present && npm test --if-present); \
 	  fi; \
 	done
+	@echo "==> services/cloud"; cd services/cloud && python -m pytest -q
 	@if [ -d services/analytics ]; then echo "==> services/analytics"; \
 	  cd services/analytics && python -m pytest -q || [ $$? -eq 5 ]; fi
 

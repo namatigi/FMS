@@ -5,6 +5,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { ConnectivityBadge, ErrorState, Freshness, Loading, PageHeader } from '../../components/ui';
 import { LiveIndicator } from '../owner/Dashboard';
 import { useLiveUpdates } from '../../lib/live';
+import PumpsTab from './PumpsTab';
 import TanksTab from './TanksTab';
 import SalesTab from './SalesTab';
 import TransactionsTab from './TransactionsTab';
@@ -17,6 +18,7 @@ import type { UserRole } from '../../types';
 const OWN: UserRole[] = ['owner', 'manager', 'platform_admin'];
 const OWN_ERB: UserRole[] = [...OWN, 'erb_national', 'erb_provincial'];
 const TABS: { id: string; label: string; roles?: UserRole[] }[] = [
+  { id: 'pumps', label: 'Pumps', roles: OWN_ERB },
   { id: 'tanks', label: 'Tanks', roles: OWN_ERB },
   { id: 'sales', label: 'Sales' },
   { id: 'transactions', label: 'Transactions' },
@@ -29,7 +31,7 @@ const TABS: { id: string; label: string; roles?: UserRole[] }[] = [
 export default function StationDetail() {
   const { id = '', tab } = useParams();
   const { user } = useAuth();
-  const live = useLiveUpdates([['station', id], ['tanks', id], ['alerts'], ['transactions', id]], id);
+  const live = useLiveUpdates([['station', id], ['pumps', id], ['tanks', id], ['alerts'], ['transactions', id]], id);
   const q = useQuery({ queryKey: ['station', id], queryFn: () => api.station(id), refetchInterval: live.refetchInterval });
   const tabs = TABS.filter((t) => !t.roles || (user && t.roles.includes(user.role)));
   if (!tab) return <Navigate to={tabs[0].id} replace />;
@@ -72,6 +74,7 @@ export default function StationDetail() {
         ))}
       </nav>
       <div className="tab-panel">
+        {tab === 'pumps' && <PumpsTab stationId={id} refetchInterval={live.refetchInterval} />}
         {tab === 'tanks' && <TanksTab stationId={id} refetchInterval={live.refetchInterval} />}
         {tab === 'sales' && <SalesTab stationId={id} />}
         {tab === 'transactions' && <TransactionsTab stationId={id} stationCode={s?.code} />}

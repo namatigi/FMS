@@ -27,9 +27,7 @@ resources:
   - monitoring/monitors.yaml
   - monitoring/prometheusrule.yaml
 images:
-  - { name: fms/core-api, newName: ghcr.io/oxoafrica/fms/core-api, newTag: latest }
-  - { name: fms/ingest-api, newName: ghcr.io/oxoafrica/fms/ingest-api, newTag: latest }
-  - { name: fms/fiscal-worker, newName: ghcr.io/oxoafrica/fms/fiscal-worker, newTag: latest }
+  - { name: fms/cloud, newName: ghcr.io/oxoafrica/fms/cloud, newTag: latest }
   - { name: fms/analytics, newName: ghcr.io/oxoafrica/fms/analytics, newTag: latest }
   - { name: fms/web, newName: ghcr.io/oxoafrica/fms/web, newTag: latest }
   - { name: fms/migrate, newName: ghcr.io/oxoafrica/fms/migrate, newTag: latest }

@@ -85,15 +85,8 @@ make migrate | make seed                # schema only | schema + demo seed
 make down | make clean                  # stop | stop and wipe volumes
 ```
 
-**Django cloud services.** `services/cloud` is a Django implementation of core-api, ingest-api and
-fiscal-worker with the same contracts. Add the override file to run it in place of the TypeScript services
-(same service names, ports and database; the proxy, web app, edge gateway and analytics are unchanged):
-
-```bash
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.django.yml up -d --build
-```
-
-Leave `-f deploy/docker-compose.django.yml` out to go back to the TypeScript services.
+core-api, ingest-api and fiscal-worker all run from the Django image built from `services/cloud`;
+`FMS_SERVICE=core|ingest|worker` picks the role (see `services/cloud/README.md`).
 
 | URL | What |
 |---|---|
@@ -125,9 +118,9 @@ Compose replication is **asynchronous** so the demo keeps running when the repli
 
 | Assumption | Where |
 |---|---|
-| All Node service images have `node` on PATH (healthchecks use `node -e fetch(...)`). The analytics image has `python`. The web image is nginx on :80 with busybox `wget` (alpine). | `docker-compose.yml` |
-| `fiscal-worker` serves `/healthz` and `/metrics` on 9464 (`PORT`/`METRICS_PORT`). | compose, k8s |
-| The mock VSDC runs from the fiscal-worker image as `node /app/packages/zra-client/bin/mock-vsdc.js` (`PORT=8200`). This means the image must contain `/app/packages/zra-client`. | compose `mock-vsdc` |
+| The Node images (edge-gateway, migrate, pts-simulator) have `node` on PATH (healthchecks use `node -e fetch(...)`). The cloud and analytics images have `python`. The web image is nginx on :80 with busybox `wget` (alpine). | `docker-compose.yml` |
+| `fiscal-worker` (`FMS_SERVICE=worker`) serves `/healthz`, `/readyz` and `/metrics` on 9464 (`METRICS_PORT`). | compose, k8s |
+| The mock VSDC runs from the edge-gateway image as `node /repo/packages/zra-client/bin/mock-vsdc.js` (`PORT=8200`); that image contains `packages/zra-client`. | compose `mock-vsdc` |
 | Edge gateway environment variables: `DATABASE_URL`, `PORT`=8100, `UI_PORT`=8101, `STATION_CODE`, `GATEWAY_CODE`, `GATEWAY_KEY` (also set as `GATEWAY_API_KEY`), `PTS_ID`, `PTS_SECRET`, `CLOUD_INGEST_URL`=`http://proxy/ingest` (the gateway appends `/v1/edge/batches`), `ZRA_*`, `PRINTER_MODE`. Metrics on 8101. The native entry point is `services/edge-gateway/dist/index.js`. | compose, `edge/` |
 | The simulator accepts `--url --pts-id --secret` (extra flags go in `SIM_EXTRA_ARGS`). Its build is `tools/pts-simulator` → `dist/cli.js`, depending on `@fms/shared` via `file:`. | `pts-simulator/Dockerfile` |
 | HTTP metrics come from a Fastify-style histogram `http_request_duration_seconds{route,status_code}`. The dashboards and alerts use it. | Grafana, PrometheusRule |

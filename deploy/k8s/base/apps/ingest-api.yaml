@@ -43,13 +43,15 @@ spec:
             matchLabels: { app.kubernetes.io/name: ingest-api }
       containers:
         - name: ingest-api
-          image: fms/ingest-api
+          image: fms/cloud   # Django (services/cloud); FMS_SERVICE picks the role
           imagePullPolicy: IfNotPresent
           ports:
             - { name: http, containerPort: 8081 }
           envFrom:
             - configMapRef: { name: fms-config }
           env:
+            - name: FMS_SERVICE
+              value: ingest
             - name: PORT
               value: "8081"
             - name: DB_USER

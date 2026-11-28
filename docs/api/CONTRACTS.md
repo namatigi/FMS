@@ -93,6 +93,7 @@ The JSON is in snake_case. List endpoints return `{ "items": [...], "next_cursor
 
 - `GET /stations?province_id=&company_id=&q=` returns items of `{id, code, name, company_id, company_name, province_id, province_name, district, town, latitude, longitude, status, connectivity, controller_last_seen_at}`.
 - `GET /stations/:id` returns the station plus `{tanks:[...], fuel_grades:[...], nozzles:[...], health:{...}}`.
+- `GET /stations/:id/pumps` returns `[{pump_no, configured, last_sale_at, today_volume_l, today_amount, today_tx, nozzles:[{nozzle_no, configured, pts_grade_id, grade_name, product_code, tank_no, price, total_volume_l, total_amount, last_sale_at, today_volume_l, today_amount, today_tx}]}]`. `total_volume_l` and `total_amount` are the nozzle's non-resettable electronic totalisers, as reported with its latest sale. A pump or nozzle that sold in the last 30 days but is missing from `nozzles` is listed with `configured: false`.
 - `GET /stations/:id/tanks` returns `[{tank_no, product_code, capacity_l, product_volume_l, ullage_l, water_height_mm, temperature_c, fill_pct, measured_at, probe_status, alarms, avg_daily_sales_l, days_of_cover}]`.
 - `GET /stations/:id/transactions?from=&to=&pump_no=&limit=&cursor=` returns items of `{id, ended_at, pump_no, nozzle_no, product_code, volume_l, price, amount, tag, fiscal_status, zra_rcpt_no}`.
 - `GET /stations/:id/sales/summary?from=&to=&group=hour|day|product|pump` returns `[{bucket, product_code, pump_no?, volume_l, amount, tx_count}]`.

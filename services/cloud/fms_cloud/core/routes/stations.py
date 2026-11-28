@@ -242,6 +242,73 @@ def station_tanks(db: Conn, station_id: str) -> list[dict[str, Any]]:
     ]
 
 
+def station_pumps(db: Conn, station_id: str) -> list[dict[str, Any]]:
+    """Pumps with their nozzles and electronic totalisers.
+
+    PTS-2 reports the nozzle's non-resettable volume and amount totalisers with every sale
+    (pump_transactions.total_volume_l / total_amount), so the current totaliser is the one on
+    the nozzle's latest sale. Pumps come from the nozzle configuration plus any pump/nozzle that
+    sold in the last 30 days (configured=false flags the latter).
+    """
+    rows = db.query(
+        f"""WITH configured AS (
+       SELECT n.pump_no, n.nozzle_no, fg.pts_grade_id, fg.name AS grade_name, fg.product_code, fg.price, t.tank_no
+         FROM fms.nozzles n
+         LEFT JOIN fms.fuel_grades fg ON fg.id = n.fuel_grade_id
+         LEFT JOIN fms.tanks t ON t.id = n.tank_id
+        WHERE n.station_id = $1),
+     seen AS (
+       SELECT DISTINCT pump_no, nozzle_no FROM fms.pump_transactions
+        WHERE station_id = $1 AND ended_at >= now() - interval '30 days'),
+     keys AS (SELECT pump_no, nozzle_no FROM configured UNION SELECT pump_no, nozzle_no FROM seen),
+     today AS (
+       SELECT pump_no, nozzle_no, sum(volume_l) AS vol, sum(amount) AS amt, count(*) AS n
+         FROM fms.pump_transactions
+        WHERE station_id = $1 AND ended_at >= {LUSAKA_TODAY_START}
+        GROUP BY 1, 2)
+     SELECT k.pump_no, k.nozzle_no, (c.pump_no IS NOT NULL) AS configured,
+            c.pts_grade_id, c.grade_name,
+            coalesce(c.product_code, lt.product_code) AS product_code,
+            coalesce(c.tank_no, lt.tank_no) AS tank_no,
+            coalesce(c.price, lt.price) AS price,
+            lt.total_volume_l, lt.total_amount, lt.ended_at AS last_sale_at,
+            coalesce(td.vol, 0) AS today_volume_l, coalesce(td.amt, 0) AS today_amount, coalesce(td.n, 0) AS today_tx
+       FROM keys k
+       LEFT JOIN configured c USING (pump_no, nozzle_no)
+       LEFT JOIN LATERAL (
+         SELECT x.product_code, x.tank_no, x.price, x.total_volume_l, x.total_amount, x.ended_at
+           FROM fms.pump_transactions x
+          WHERE x.station_id = $1 AND x.pump_no = k.pump_no AND x.nozzle_no = k.nozzle_no
+          ORDER BY x.ended_at DESC
+          LIMIT 1) lt ON TRUE
+       LEFT JOIN today td USING (pump_no, nozzle_no)
+      ORDER BY k.pump_no, k.nozzle_no""",
+        [station_id],
+    )
+    pumps: dict[int, dict[str, Any]] = {}
+    for r in rows:
+        p = pumps.setdefault(
+            r["pump_no"],
+            {
+                "pump_no": r["pump_no"],
+                "configured": False,
+                "last_sale_at": None,
+                "today_volume_l": 0,
+                "today_amount": 0,
+                "today_tx": 0,
+                "nozzles": [],
+            },
+        )
+        p["configured"] = p["configured"] or r["configured"]
+        if r["last_sale_at"] and (p["last_sale_at"] is None or r["last_sale_at"] > p["last_sale_at"]):
+            p["last_sale_at"] = r["last_sale_at"]
+        p["today_volume_l"] = round_(p["today_volume_l"] + r["today_volume_l"])
+        p["today_amount"] = round_(p["today_amount"] + r["today_amount"], 2)
+        p["today_tx"] += r["today_tx"]
+        p["nozzles"].append({k: v for k, v in r.items() if k != "pump_no"})
+    return list(pumps.values())
+
+
 # ------------------------------------------------------------ schemas
 
 
@@ -399,6 +466,14 @@ def station_tanks_route(request: HttpRequest, id: str):
     db = ro()
     assert_station_in_scope(db, pr, id)
     return station_tanks(db, id)
+
+
+@router.get("/stations/{id}/pumps", summary="Pumps with nozzles, electronic totalisers (from the latest sale) and today's sales (array)")
+def station_pumps_route(request: HttpRequest, id: str):
+    pr = require_user(request)
+    db = ro()
+    assert_station_in_scope(db, pr, id)
+    return station_pumps(db, id)
 
 
 # ------------------------------------------------------------ transactions (keyset)

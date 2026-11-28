@@ -92,9 +92,9 @@ sequenceDiagram
 |---|---|---|
 | **PTS-2 controller** (existing hardware) | Technotrade firmware | Protocol conversion to pumps and ATGs, automatic authorisation, a local SD-card database, and upload with retry |
 | **edge-gateway** (`services/edge-gateway`) | Node.js 20 + TypeScript + Fastify, local PostgreSQL | Receives jsonPTS. Holds a durable local outbox. Fiscalises with ZRA through VSDC, then prints the receipt. Syncs to the cloud. Applies cloud commands such as prices. Serves a local status UI that keeps working if the internet is down. |
-| **ingest-api** (`services/ingest-api`) | Node.js + Fastify + `pg` | Stateless and horizontally scaled. Accepts edge batches and direct jsonPTS uploads. Writes idempotently and enqueues jobs. |
-| **core-api** (`services/core-api`) | Node.js + Fastify + `pg` + OpenAPI | Auth (JWT), RBAC with province and company scoping, the owner and manager API, the ERB regulator API, the partner API and admin. |
-| **fiscal-worker** (`services/fiscal-worker`) | Node.js | Job workers using `FOR UPDATE SKIP LOCKED`. Cloud fiscalisation for direct-mode stations, webhooks, daily roll-ups, ERB exports and notifications. |
+| **ingest-api** (`services/cloud`, `FMS_SERVICE=ingest`) | Python 3.12 + Django | Stateless and horizontally scaled. Accepts edge batches and direct jsonPTS uploads. Writes idempotently and enqueues jobs. |
+| **core-api** (`services/cloud`, `FMS_SERVICE=core`) | Python 3.12 + Django + Django Ninja (OpenAPI) | Auth (JWT), RBAC with province and company scoping, the owner and manager API, the ERB regulator API, the partner API and admin. |
+| **fiscal-worker** (`services/cloud`, `FMS_SERVICE=worker`) | Python 3.12 + Django (`manage.py fms_worker`) | Job workers using `FOR UPDATE SKIP LOCKED`. Cloud fiscalisation for direct-mode stations, webhooks, daily roll-ups, ERB exports and notifications. |
 | **analytics** (`services/analytics`) | Python 3.12 + FastAPI + pandas/numpy/statsmodels | Demand forecasting, stock-out prediction, national reserve, anomaly detection, price simulation and a **custom AI model registry**. |
 | **web** (`apps/web`) | React + TypeScript + Vite | Owner and manager portal, ERB regulator portal and the admin console. It is a responsive PWA. |
 | **mobile** (`apps/mobile`) | React Native (Expo) + TypeScript | A station owner and manager app for Android and iOS, with push alerts. |
@@ -295,11 +295,14 @@ web and mobile apps and analytics are unchanged.
 - **Verified:**
   - 113 pytest tests (ports of the TypeScript suites plus compatibility tests) against PostgreSQL 16.
   - `node tools/e2e/e2e.mjs --impl django`: 24/24 checks.
-  - The Docker stack with `deploy/docker-compose.django.yml` serving the portal, LUS-0001 and the 200-station fleet.
+  - The Docker stack (then switched with a compose override file) serving the portal, LUS-0001 and the 200-station fleet.
 - **Known differences:**
   - malformed inputs that made the TypeScript services return 500 now get 400;
   - validation messages use pydantic's wording (codes and statuses are unchanged);
   - the OpenAPI document is at `/api/openapi.json` (Swagger UI stays at `/api/docs`);
   - Prometheus process metrics use the Python client's names.
-- **Switching:** add or drop `-f deploy/docker-compose.django.yml` (see `deploy/README.md`). mock-vsdc still runs
-  from the TypeScript fiscal-worker image. Remove the TypeScript services once Django has run in staging.
+- **TypeScript services removed (28 Nov 2026).** `services/core-api`, `services/ingest-api` and
+  `services/fiscal-worker` were deleted once the Django implementation passed the same checks; compose and the
+  Kubernetes manifests run the `cloud` image, and mock-vsdc runs from the edge-gateway image. The rows for those
+  services in the §13.1 table describe the original TypeScript build. Their code stays in git history before
+  this change.

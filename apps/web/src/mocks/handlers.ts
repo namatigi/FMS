@@ -218,6 +218,41 @@ export const handlers = [
     if (!s) return err(404, 'not_found', 'Station not found');
     return HttpResponse.json(tanksFor(s.id));
   })),
+  http.get(`${A}/stations/:id/pumps`, guard(null, ({ user, params }) => {
+    const s = stationOr404(user, String(params.id));
+    if (!s) return err(404, 'not_found', 'Station not found');
+    const idx = STATIONS.indexOf(s);
+    const grades = GRADES(idx);
+    const tanks = tanksFor(s.id);
+    const today = dayStart(0);
+    const pumps = new Map<number, { pump_no: number; configured: boolean; last_sale_at: string | null; today_volume_l: number; today_amount: number; today_tx: number; nozzles: Map<number, Record<string, unknown>> }>();
+    // Oldest first, so the running totals end at the latest sale (totalisers start from a per-nozzle base).
+    for (const t of [...transactionsFor(s.id)].reverse()) {
+      const p = pumps.get(t.pump_no) ?? { pump_no: t.pump_no, configured: true, last_sale_at: null, today_volume_l: 0, today_amount: 0, today_tx: 0, nozzles: new Map() };
+      pumps.set(t.pump_no, p);
+      const g = grades.find((x) => x.pts_grade_id === t.nozzle_no);
+      const n = p.nozzles.get(t.nozzle_no) ?? {
+        nozzle_no: t.nozzle_no, configured: true, pts_grade_id: g?.pts_grade_id ?? null, grade_name: g?.name ?? null, product_code: t.product_code,
+        tank_no: tanks.find((k) => k.product_code === t.product_code)?.tank_no ?? null, price: g?.price ?? t.price,
+        total_volume_l: 250000 * t.pump_no + 100000 * t.nozzle_no, total_amount: (250000 * t.pump_no + 100000 * t.nozzle_no) * t.price,
+        last_sale_at: null, today_volume_l: 0, today_amount: 0, today_tx: 0,
+      };
+      p.nozzles.set(t.nozzle_no, n);
+      n.total_volume_l = round((n.total_volume_l as number) + t.volume_l, 3);
+      n.total_amount = round((n.total_amount as number) + t.amount, 2);
+      n.last_sale_at = t.ended_at;
+      p.last_sale_at = t.ended_at > (p.last_sale_at ?? '') ? t.ended_at : p.last_sale_at;
+      if (new Date(t.ended_at).getTime() >= today) {
+        n.today_volume_l = round((n.today_volume_l as number) + t.volume_l, 3);
+        n.today_amount = round((n.today_amount as number) + t.amount, 2);
+        n.today_tx = (n.today_tx as number) + 1;
+        p.today_volume_l = round(p.today_volume_l + t.volume_l, 3);
+        p.today_amount = round(p.today_amount + t.amount, 2);
+        p.today_tx += 1;
+      }
+    }
+    return HttpResponse.json([...pumps.values()].sort((a, b) => a.pump_no - b.pump_no).map((p) => ({ ...p, nozzles: [...p.nozzles.values()] })));
+  })),
   http.get(`${A}/stations/:id/transactions`, guard(null, ({ user, params, url }) => {
     const s = stationOr404(user, String(params.id));
     if (!s) return err(404, 'not_found', 'Station not found');
