@@ -56,6 +56,8 @@ spec:
               value: "9464"
             - name: METRICS_PORT
               value: "9464"
+            - name: EXPORT_DIR   # ERB daily returns; the root filesystem is read-only
+              value: /var/lib/fms/exports
             - name: WORKER_ID
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - name: DB_USER
@@ -95,9 +97,12 @@ spec:
             capabilities: { drop: [ALL] }
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
+            - { name: exports, mountPath: /var/lib/fms/exports }
       volumes:
         - name: tmp
           emptyDir: { sizeLimit: 256Mi }
+        - name: exports
+          persistentVolumeClaim: { claimName: fms-exports }
 ---
 apiVersion: v1
 kind: Service

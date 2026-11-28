@@ -1,0 +1,22 @@
+# Shared volume for ERB daily-return exports (CSV + JSON) written by fiscal-worker.
+#
+# The worker runs with readOnlyRootFilesystem, and any replica may run an export
+# job, so the files go to this ReadWriteMany volume mounted at /var/lib/fms/exports
+# (EXPORT_DIR). The daily_summary webhook links to them, so they must outlive pods.
+#
+# storageClassName is cluster-specific and must support ReadWriteMany (for example
+# NFS / nfs-subdir-external-provisioner, AWS EFS, Azure Files, CephFS). Set it in the
+# overlay; without it the cluster's default class is used, which is often
+# ReadWriteOnce only, and the claim would stay Pending.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fms-exports
+  labels:
+    app.kubernetes.io/name: fms-exports
+    app.kubernetes.io/component: worker
+spec:
+  accessModes: [ReadWriteMany]
+  resources:
+    requests:
+      storage: 20Gi
