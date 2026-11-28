@@ -23,6 +23,7 @@ Everything is stored in **PostgreSQL**.
 | `services/ingest-api` | Cloud ingestion from edge gateways and direct PTS-2 uploads |
 | `services/core-api` | Auth, RBAC, owner and manager API, ERB regulator API, partner API, admin |
 | `services/fiscal-worker` | Job workers: cloud fiscalisation, roll-ups, webhooks, ERB exports, scheduler |
+| `services/cloud` | **Django** implementation of ingest-api, core-api and fiscal-worker (same contracts; switch with `deploy/docker-compose.django.yml`) |
 | `services/analytics` | Python: forecasts, stock-out, national reserve, anomalies, pricing, AI model registry |
 | `apps/web` | React portal: owners, ERB, ZRA, admin (installable PWA) |
 | `apps/mobile` | Expo / React Native app for owners and managers |

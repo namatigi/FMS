@@ -85,6 +85,16 @@ make migrate | make seed                # schema only | schema + demo seed
 make down | make clean                  # stop | stop and wipe volumes
 ```
 
+**Django cloud services.** `services/cloud` is a Django implementation of core-api, ingest-api and
+fiscal-worker with the same contracts. Add the override file to run it in place of the TypeScript services
+(same service names, ports and database; the proxy, web app, edge gateway and analytics are unchanged):
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.django.yml up -d --build
+```
+
+Leave `-f deploy/docker-compose.django.yml` out to go back to the TypeScript services.
+
 | URL | What |
 |---|---|
 | http://localhost:8000 | Web portal through the proxy (`/api/v1`, `/ingest`, `/analytics/v1`) |

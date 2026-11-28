@@ -279,3 +279,27 @@ It then verifies:
    - the mobile app is untested on a real device
    - jsonPTS, ZRA VSDC and PTS-2 control request names must be checked against the vendor and ZRA specifications (Â§12). They are isolated in `packages/shared/src/jsonpts.ts`, `packages/zra-client/src/spec.ts` and `services/edge-gateway/src/pts/control.ts`.
 7. **Totaliser theft limit.** It is detected from the second sale on a nozzle onwards; the first sale after commissioning has no baseline. Seed the baseline from the controller's `GetPumpTotals` at commissioning.
+
+### 13.4 Django implementation of the cloud services (28 Nov 2026)
+
+`services/cloud` reimplements ingest-api, core-api and fiscal-worker in Python on Django (Django Ninja for
+the HTTP API). One image runs all three, picked with `FMS_SERVICE=core|ingest|worker`. The edge gateway,
+web and mobile apps and analytics are unchanged.
+
+- **Same contracts.** Paths, JSON fields, error codes, cursors, environment variables, ports and database are
+  the same. JWTs, scrypt password hashes, API keys, webhook and PTS-2 signatures, ZRA saveSales payloads,
+  invoice numbers and printed receipts are byte-compatible (checked against the TypeScript output), so either
+  implementation can serve a running system.
+- **Same SQL.** There are no Django models or migrations for the `fms` schema; `db/migrations` stays the source
+  of truth and the queries were copied from the TypeScript services.
+- **Verified:**
+  - 113 pytest tests (ports of the TypeScript suites plus compatibility tests) against PostgreSQL 16.
+  - `node tools/e2e/e2e.mjs --impl django`: 24/24 checks.
+  - The Docker stack with `deploy/docker-compose.django.yml` serving the portal, LUS-0001 and the 200-station fleet.
+- **Known differences:**
+  - malformed inputs that made the TypeScript services return 500 now get 400;
+  - validation messages use pydantic's wording (codes and statuses are unchanged);
+  - the OpenAPI document is at `/api/openapi.json` (Swagger UI stays at `/api/docs`);
+  - Prometheus process metrics use the Python client's names.
+- **Switching:** add or drop `-f deploy/docker-compose.django.yml` (see `deploy/README.md`). mock-vsdc still runs
+  from the TypeScript fiscal-worker image. Remove the TypeScript services once Django has run in staging.
