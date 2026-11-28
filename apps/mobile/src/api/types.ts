@@ -141,6 +141,9 @@ export interface PumpNozzle {
 export interface Pump {
   pump_no: number;
   configured: boolean;
+  /** PTS-2 pump state from the controller's latest status ('idle', 'filling', 'offline', ...), or 'unknown' when the controller has not reported recently. */
+  status?: string;
+  status_at?: string | null;
   last_sale_at: string | null;
   today_volume_l: number;
   today_amount: number;

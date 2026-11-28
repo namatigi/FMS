@@ -8,7 +8,7 @@ Each simulated controller does the following:
 - **`UploadPumpTransaction`:** one sequence of transaction numbers per pump. The per-nozzle totalisers are monotonic and never reset. `Amount` is `Volume × Price`, with the price taken from the grade config. The tag is optional.
 - **`UploadTankMeasurement`:** sent on each change in product height, at most once per tank per second. Tank drawdown matches the sales. It also models temperature drift, slow water ingress and alarms (LowProduct, CriticalLowProduct, HighProduct and HighWater).
 - **`UploadInTankDelivery`:** when a tank drops below 25 %, it is refilled to 90 % and the start and end measurements are uploaded.
-- **`UploadAlertRecord`:** probe alarms when they become active, and occasional pump offline and online events.
+- **`UploadAlertRecord`:** probe alarms when they become active, and occasional pump outages: an online pump goes offline (`PumpOffline`) and comes back after 1 to 10 minutes (`PumpOnline`; library options `alertProbability`, `pumpOutageMinS`, `pumpOutageMaxS`).
 - **`UploadStatus`:** sent every `--status-interval` seconds.
 - **Signing:** the body is signed with `X-Pts-Signature = HMAC-SHA256(secret, raw body)` when a secret is given. `X-Pts-Id` is always sent.
 - **Retries like the real controller:** packets stay queued until the server answers `Error=false` for that packet `Id`. Anything else is re-sent with the same Id and data, and the uploader backs off while the server is unreachable.

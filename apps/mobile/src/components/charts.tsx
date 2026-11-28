@@ -181,20 +181,38 @@ export function PumpIllustration({ pump, width = 64 }: { pump: Pump; width?: num
   );
 }
 
+/** Badge colour and label for a PTS-2 pump state. */
+export function pumpStatusStyle(t: ReturnType<typeof useTheme>, status?: string): { label: string; color: string } {
+  switch (status ?? 'unknown') {
+    case 'idle':
+      return { label: 'IDLE', color: t.success };
+    case 'filling':
+      return { label: 'FILLING', color: t.info };
+    case 'offline':
+      return { label: 'OFFLINE', color: t.danger };
+    case 'unknown':
+      return { label: 'STATUS UNKNOWN', color: t.textMuted };
+    default:
+      return { label: String(status).toUpperCase(), color: t.warning };
+  }
+}
+
 /** Pump card: drawing, tanks it draws from, and each nozzle's volume and amount totalizers. */
 export function PumpCard({ pump, testID }: { pump: Pump; testID?: string }) {
   const t = useTheme();
   const nozzles = [...pump.nozzles].sort((a, b) => a.nozzle_no - b.nozzle_no);
   const tanks = [...new Set(nozzles.map((n) => n.tank_no).filter((x): x is number => x != null))].sort((a, b) => a - b);
+  const st = pumpStatusStyle(t, pump.status);
   return (
-    <Card testID={testID} accessibilityLabel={`Pump ${pump.pump_no}`}>
+    <Card testID={testID} accessibilityLabel={`Pump ${pump.pump_no}, ${st.label.toLowerCase()}`}>
       <Row style={{ justifyContent: 'space-between' }}>
         <T variant="h2">
           Pump {pump.pump_no}
           {tanks.length ? ` · Tank${tanks.length > 1 ? 's' : ''} ${tanks.join(', ')}` : ''}
         </T>
-        {!pump.configured ? <Badge label="NOT CONFIGURED" color={t.warning} /> : null}
+        <Badge label={st.label} color={st.color} testID={testID ? `${testID}-status` : undefined} />
       </Row>
+      {!pump.configured ? <Badge label="NOT CONFIGURED" color={t.warning} /> : null}
       <Row gap={space.lg} style={{ alignItems: 'flex-start' }}>
         <PumpIllustration pump={pump} />
         <View style={{ flex: 1, gap: space.sm }}>

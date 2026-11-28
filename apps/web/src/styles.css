@@ -1012,6 +1012,12 @@ textarea {
   display: grid;
   gap: 10px;
 }
+.pump-offline {
+  border-color: var(--bad);
+}
+.pump-offline .pump-art {
+  opacity: 0.45;
+}
 .pump-head,
 .pump-foot {
   display: flex;

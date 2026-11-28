@@ -251,7 +251,11 @@ export const handlers = [
         p.today_tx += 1;
       }
     }
-    return HttpResponse.json([...pumps.values()].sort((a, b) => a.pump_no - b.pump_no).map((p) => ({ ...p, nozzles: [...p.nozzles.values()] })));
+    // Live pump state: unknown when the station is not reporting; pump 2 shown offline for demo purposes.
+    const statusOf = (no: number) => (s.connectivity !== 'online' ? 'unknown' : no === 2 ? 'offline' : 'idle');
+    return HttpResponse.json([...pumps.values()].sort((a, b) => a.pump_no - b.pump_no).map((p) => ({
+      ...p, status: statusOf(p.pump_no), status_at: s.controller_last_seen_at ?? null, nozzles: [...p.nozzles.values()],
+    })));
   })),
   http.get(`${A}/stations/:id/transactions`, guard(null, ({ user, params, url }) => {
     const s = stationOr404(user, String(params.id));

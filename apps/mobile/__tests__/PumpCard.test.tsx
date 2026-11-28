@@ -16,6 +16,8 @@ const nozzle = {
 const pump: Pump = {
   pump_no: 3,
   configured: false,
+  status: 'offline',
+  status_at: new Date().toISOString(),
   last_sale_at: new Date().toISOString(),
   today_volume_l: 412.5,
   today_amount: 13138.13,
@@ -35,6 +37,7 @@ describe('PumpCard', () => {
     );
     expect(screen.getByText('Pump 3 · Tanks 1, 2')).toBeTruthy();
     expect(screen.getByText('NOT CONFIGURED')).toBeTruthy();
+    expect(screen.getByText('OFFLINE')).toBeTruthy();
     expect(screen.getByText('Nozzle 1 · Unleaded Petrol · Tank 1')).toBeTruthy();
     expect(screen.getAllByText('Volume totalizer')).toHaveLength(2);
     expect(screen.getByText('280,084.20 L')).toBeTruthy();

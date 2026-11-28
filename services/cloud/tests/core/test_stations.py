@@ -58,6 +58,21 @@ def test_pumps_show_latest_totalisers_and_unconfigured_pumps(core_client, T, db)
     assert get(core_client, T["owner"], f"/api/v1/stations/{ST['SOU']}/pumps").status_code == 404
 
 
+def test_pump_status_comes_from_the_latest_controller_status(core_client, T, db):
+    status = '{"Pumps": [{"Pump": 1, "Status": "Offline"}, {"Pump": 2, "Status": "Filling"}]}'
+    try:
+        db.execute("UPDATE fms.controllers SET last_status = $2::jsonb, last_seen_at = now() WHERE station_id = $1", [ST["LUS"], status])
+        pumps = {p["pump_no"]: p for p in get(core_client, T["owner"], f"/api/v1/stations/{ST['LUS']}/pumps").json()}
+        assert pumps[1]["status"] == "offline" and pumps[2]["status"] == "filling"
+        assert pumps[1]["status_at"] is not None
+        # A controller that stopped reporting gives no live state.
+        db.execute("UPDATE fms.controllers SET last_seen_at = now() - interval '10 minutes' WHERE station_id = $1", [ST["LUS"]])
+        pumps = {p["pump_no"]: p for p in get(core_client, T["owner"], f"/api/v1/stations/{ST['LUS']}/pumps").json()}
+        assert pumps[1]["status"] == "unknown" and pumps[1]["status_at"] is not None
+    finally:
+        db.execute("UPDATE fms.controllers SET last_status = NULL, last_seen_at = now() WHERE station_id = $1", [ST["LUS"]])
+
+
 def test_transactions_keyset_pagination(core_client, T):
     seen: set[int] = set()
     cursor = None

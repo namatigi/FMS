@@ -3,7 +3,23 @@ import { api } from '../../api/endpoints';
 import { formatLitres, formatNumber, formatZMW } from '../../lib/format';
 import { productColor } from '../../lib/theme';
 import { productLabel, type Pump, type PumpNozzle } from '../../types';
-import { Badge, Empty, Freshness, QueryView } from '../../components/ui';
+import { Badge, Empty, Freshness, QueryView, type Tone } from '../../components/ui';
+
+const STATUS: Record<string, { tone: Tone; label: string }> = {
+  idle: { tone: 'good', label: 'Idle' },
+  filling: { tone: 'info', label: 'Filling' },
+  offline: { tone: 'bad', label: 'Offline' },
+  unknown: { tone: 'neutral', label: 'Status unknown' },
+};
+
+export function PumpStatusBadge({ status }: { status?: string }) {
+  const s = STATUS[status ?? 'unknown'] ?? { tone: 'warn' as Tone, label: status!.charAt(0).toUpperCase() + status!.slice(1) };
+  return (
+    <Badge tone={s.tone} title={status === 'unknown' ? 'The forecourt controller has not reported pump states in the last 5 minutes' : `Pump state reported by the forecourt controller`}>
+      {s.label}
+    </Badge>
+  );
+}
 
 /** Fuel dispenser illustration with the pump number on its display and one holster per nozzle. */
 export function PumpIllustration({ pump }: { pump: Pump }) {
@@ -63,9 +79,12 @@ export function PumpCard({ pump }: { pump: Pump }) {
   const nozzles = [...pump.nozzles].sort((a, b) => a.nozzle_no - b.nozzle_no);
   const tanks = [...new Set(nozzles.map((n) => n.tank_no).filter((t): t is number => t != null))].sort((a, b) => a - b);
   return (
-    <article className="pump" aria-label={`Pump ${pump.pump_no}`}>
+    <article className={`pump ${pump.status === 'offline' ? 'pump-offline' : ''}`} aria-label={`Pump ${pump.pump_no}`}>
       <header className="pump-head">
-        <strong>Pump {pump.pump_no}</strong>
+        <span className="pump-head-meta">
+          <strong>Pump {pump.pump_no}</strong>
+          <PumpStatusBadge status={pump.status} />
+        </span>
         <span className="pump-head-meta">
           {tanks.length > 0 && <span className="muted">Tank{tanks.length > 1 ? 's' : ''} {tanks.join(', ')}</span>}
           {!pump.configured && (

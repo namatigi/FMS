@@ -49,6 +49,37 @@ test('transactions have monotonic totalisers and transaction numbers, tanks draw
   assert.ok(packets.some((p) => p.Type === 'UploadStatus'));
 });
 
+test('pump outages are temporary and never leave the station without pumps for long', () => {
+  // Very frequent outages of 5-10 s, so a 10-minute run exercises many of them.
+  const sim = new PtsControllerSim({
+    ptsId: PTS, pumps: 4, tanks: 2, rate: 1, seed: 7, alertProbability: 0.3, pumpOutageMinS: 5, pumpOutageMaxS: 10,
+  });
+  const start = Date.UTC(2026, 10, 27, 8, 0, 0);
+  const packets = run(sim, 600, start);
+  const events = packets
+    .filter((p) => p.Type === 'UploadAlertRecord' && String((p.Data as Record<string, unknown>).Type).startsWith('Pump'))
+    .map((p) => p.Data as { DeviceNumber: number; Type: string; DateTime: string });
+  assert.ok(events.filter((e) => e.Type === 'PumpOffline').length > 20, 'expected many outages');
+  const offlineSince = new Map<number, number>();
+  for (const e of events) {
+    const at = Date.parse(e.DateTime + 'Z') - 2 * 3600_000; // PTS local time (UTC+2) -> UTC
+    if (e.Type === 'PumpOffline') {
+      assert.ok(!offlineSince.has(e.DeviceNumber), `pump ${e.DeviceNumber} went offline twice without coming back`);
+      offlineSince.set(e.DeviceNumber, at);
+    } else {
+      const since = offlineSince.get(e.DeviceNumber);
+      assert.ok(since !== undefined, `pump ${e.DeviceNumber} came online without having gone offline`);
+      assert.ok(at - since <= 11_000, `pump ${e.DeviceNumber} was offline ${(at - since) / 1000}s (max 10s + 1 tick)`);
+      offlineSince.delete(e.DeviceNumber);
+    }
+  }
+  // Sales keep flowing across pumps instead of collapsing onto one.
+  const pumpsWithSales = new Set(
+    packets.filter((p) => p.Type === 'UploadPumpTransaction').map((p) => (p.Data as { Pump: number }).Pump),
+  );
+  assert.equal(pumpsWithSales.size, 4);
+});
+
 test('fault injection breaks totaliser continuity', () => {
   const sim = new PtsControllerSim({ ptsId: PTS, rate: 2, seed: 7, faultInject: 0.5 });
   const tx = run(sim, 60).filter((p) => p.Type === 'UploadPumpTransaction').map((p) => p.Data as Record<string, number>);
