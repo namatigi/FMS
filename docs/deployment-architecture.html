@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FMS deployment architecture</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --surface: #ffffff; --text: #14181f; --muted: #5b6472; --border: #d7dce3;
+    --teal-fill: #e1f5ee; --teal-stroke: #0f6e56; --teal-text: #085041;
+    --purple-fill: #eeedfe; --purple-stroke: #534ab7; --purple-text: #3c3489;
+    --box-fill: #f1efe8; --box-stroke: #888780; --box-title: #2c2c2a; --box-sub: #5f5e5a;
+    --arrow: #5f5e5a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101418; --surface: #171c22; --text: #e6e9ee; --muted: #9aa4b2; --border: #2a313b;
+      --teal-fill: #083a2f; --teal-stroke: #5dcaa5; --teal-text: #9fe1cb;
+      --purple-fill: #26215c; --purple-stroke: #afa9ec; --purple-text: #cecbf6;
+      --box-fill: #2c2c2a; --box-stroke: #b4b2a9; --box-title: #f1efe8; --box-sub: #d3d1c7;
+      --arrow: #b4b2a9;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 4px; }
+  h2 { font-size: 19px; font-weight: 600; margin: 32px 0 8px; }
+  .lede { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  svg { display: block; width: 100%; height: auto; }
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .t { font-size: 14px; font-weight: 600; }
+  .s { font-size: 12px; }
+  .box rect { fill: var(--box-fill); stroke: var(--box-stroke); stroke-width: .6; }
+  .box .t { fill: var(--box-title); } .box .s { fill: var(--box-sub); }
+  .teal rect { fill: var(--teal-fill); stroke: var(--teal-stroke); stroke-width: .6; } .teal .t, .teal .s { fill: var(--teal-text); }
+  .purple rect { fill: var(--purple-fill); stroke: var(--purple-stroke); stroke-width: .6; } .purple .t { fill: var(--purple-text); }
+  .note { fill: var(--teal-text); }
+  .arr { stroke: var(--arrow); stroke-width: 1.4; fill: none; }
+  ul { padding-left: 20px; margin: 8px 0; } li { margin: 4px 0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--box-fill); color: var(--box-title); padding: 1px 5px; border-radius: 4px; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 14px; background: var(--surface); }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  footer { margin-top: 32px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>FMS deployment architecture</h1>
+  <p class="lede">National Fuel Monitoring System (Zambia), shown with four demo stations in three provinces: two in Lusaka, one in Copperbelt and one in Southern.</p>
+
+  <div class="card">
+    <svg viewBox="0 0 680 590" role="img" aria-labelledby="diag-title diag-desc">
+      <title id="diag-title">FMS deployment architecture with four stations in three provinces</title>
+      <desc id="diag-desc">Two Lusaka stations, one Copperbelt station and one Southern station send data to the cloud ingest API. Edge-gateway stations sign sales with ZRA themselves; direct PTS-2 stations are signed by the cloud fiscal worker. The cloud runs a proxy, web portal, Django core and ingest APIs, fiscal worker, analytics and PostgreSQL, where every station belongs to a province.</desc>
+      <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+      <g class="teal"><rect x="30" y="40" width="220" height="182" rx="16"/><text class="t" x="140" y="62" text-anchor="middle">Lusaka province</text></g>
+      <g class="box"><rect x="50" y="78" width="180" height="56" rx="8"/><text class="t" x="140" y="100" text-anchor="middle">LUS-0001</text><text class="s" x="140" y="120" text-anchor="middle">Edge gateway</text></g>
+      <g class="box"><rect x="50" y="148" width="180" height="56" rx="8"/><text class="t" x="140" y="170" text-anchor="middle">LUS-1001</text><text class="s" x="140" y="190" text-anchor="middle">Direct PTS-2</text></g>
+
+      <g class="teal"><rect x="30" y="240" width="220" height="112" rx="16"/><text class="t" x="140" y="262" text-anchor="middle">Copperbelt province</text></g>
+      <g class="box"><rect x="50" y="278" width="180" height="56" rx="8"/><text class="t" x="140" y="300" text-anchor="middle">COP-0001</text><text class="s" x="140" y="320" text-anchor="middle">Edge gateway</text></g>
+
+      <g class="teal"><rect x="30" y="368" width="220" height="112" rx="16"/><text class="t" x="140" y="390" text-anchor="middle">Southern province</text></g>
+      <g class="box"><rect x="50" y="406" width="180" height="56" rx="8"/><text class="t" x="140" y="428" text-anchor="middle">SOU-0001</text><text class="s" x="140" y="448" text-anchor="middle">Direct PTS-2</text></g>
+
+      <g class="box"><rect x="30" y="500" width="220" height="56" rx="8"/><text class="t" x="140" y="522" text-anchor="middle">ZRA VSDC</text><text class="s" x="140" y="542" text-anchor="middle">Signed at edge or by worker</text></g>
+
+      <g class="box"><rect x="520" y="40" width="130" height="50" rx="8"/><text class="t" x="585" y="60" text-anchor="middle">Users</text><text class="s" x="585" y="78" text-anchor="middle">Web, mobile</text></g>
+
+      <g class="purple"><rect x="290" y="110" width="360" height="370" rx="20"/><text class="t" x="310" y="134">Cloud</text></g>
+      <g class="box"><rect x="310" y="148" width="320" height="50" rx="8"/><text class="t" x="470" y="168" text-anchor="middle">Proxy / ingress</text><text class="s" x="470" y="186" text-anchor="middle">/  /api  /ingest  /analytics</text></g>
+      <g class="box"><rect x="310" y="214" width="96" height="52" rx="8"/><text class="t" x="358" y="235" text-anchor="middle">web</text><text class="s" x="358" y="254" text-anchor="middle">React portal</text></g>
+      <g class="box"><rect x="422" y="214" width="96" height="52" rx="8"/><text class="t" x="470" y="235" text-anchor="middle">core-api</text><text class="s" x="470" y="254" text-anchor="middle">Django ×2</text></g>
+      <g class="box"><rect x="534" y="214" width="96" height="52" rx="8"/><text class="t" x="582" y="235" text-anchor="middle">ingest-api</text><text class="s" x="582" y="254" text-anchor="middle">Django ×2</text></g>
+      <g class="box"><rect x="310" y="282" width="152" height="52" rx="8"/><text class="t" x="386" y="303" text-anchor="middle">fiscal-worker</text><text class="s" x="386" y="322" text-anchor="middle">Signs direct sales</text></g>
+      <g class="box"><rect x="478" y="282" width="152" height="52" rx="8"/><text class="t" x="554" y="303" text-anchor="middle">analytics</text><text class="s" x="554" y="322" text-anchor="middle">Per-province reserve</text></g>
+      <g class="box"><rect x="310" y="350" width="320" height="52" rx="8"/><text class="t" x="470" y="371" text-anchor="middle">PostgreSQL 16</text><text class="s" x="470" y="390" text-anchor="middle">Every station tagged with its province</text></g>
+      <text class="s" x="470" y="428" text-anchor="middle" style="fill:var(--purple-text)">ERB provincial officers see only their province;</text>
+      <text class="s" x="470" y="446" text-anchor="middle" style="fill:var(--purple-text)">ERB national and ZRA see all four stations</text>
+
+      <line x1="230" y1="106" x2="268" y2="106" class="arr"/>
+      <line x1="230" y1="176" x2="268" y2="176" class="arr"/>
+      <line x1="230" y1="306" x2="268" y2="306" class="arr"/>
+      <line x1="230" y1="434" x2="268" y2="434" class="arr"/>
+      <line x1="268" y1="106" x2="268" y2="434" class="arr"/>
+      <line x1="268" y1="173" x2="306" y2="173" class="arr" marker-end="url(#arrow)"/>
+      <line x1="585" y1="90" x2="585" y2="144" class="arr" marker-end="url(#arrow)"/>
+      <path d="M310 308 L282 308 L282 528 L254 528" class="arr" marker-end="url(#arrow)"/>
+    </svg>
+  </div>
+
+  <h2>The four stations</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Station</th><th>Province</th><th>Connection</th><th>Who signs the ZRA receipt</th></tr></thead>
+      <tbody>
+        <tr><td>LUS-0001 Zambezi Cairo Road</td><td>Lusaka</td><td>Edge gateway, batches to <code>/ingest/v1/edge/batches</code></td><td>Edge gateway, which also prints it</td></tr>
+        <tr><td>LUS-1001 Lusaka Station 1</td><td>Lusaka</td><td>Direct PTS-2 to <code>/ingest/pts</code></td><td>Cloud fiscal-worker</td></tr>
+        <tr><td>COP-0001 Copper Fuels Kitwe</td><td>Copperbelt</td><td>Edge gateway, batches to <code>/ingest/v1/edge/batches</code></td><td>Edge gateway, which also prints it</td></tr>
+        <tr><td>SOU-0001 Copper Fuels Livingstone</td><td>Southern</td><td>Direct PTS-2 to <code>/ingest/pts</code></td><td>Cloud fiscal-worker</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li><strong>One cloud for every province.</strong> All four stations feed the same ingest API and database. The province is a property of the station (<code>stations.province_id</code>), not a separate deployment.</li>
+    <li><strong>Who sees what.</strong> The ERB Lusaka officer sees LUS-0001 and LUS-1001, the Copperbelt officer sees COP-0001 and the Southern officer sees SOU-0001. ERB national and ZRA auditors see all four. Owners see only their own company's stations, in any province.</li>
+    <li><strong>Province figures.</strong> The ERB provinces page and the analytics national reserve add up stock, sales and days of cover per province from the same data.</li>
+  </ul>
+
+  <h2>How data moves</h2>
+  <ul>
+    <li><strong>At the station:</strong> the PTS-2 controller pushes each sale and tank reading to the edge gateway. The gateway signs the sale with ZRA's VSDC, prints the receipt, and stores everything in a local outbox, so the station keeps selling and fiscalising through internet outages. A keepalived pair can make the gateway highly available.</li>
+    <li><strong>Station to cloud:</strong> the gateway syncs batches to <code>/ingest</code>; price and other commands ride back on the replies. Stations without a gateway (direct mode) post jsonPTS to <code>/ingest/pts</code>, and the cloud fiscal-worker signs those sales with ZRA.</li>
+    <li><strong>Users:</strong> the web portal, mobile app and partner systems go through the same proxy. <code>core-api</code> serves the owner, ERB, ZRA, admin and partner APIs; <code>analytics</code> serves forecasts.</li>
+  </ul>
+
+  <h2>The same layout in each environment</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Piece</th><th>Docker Compose (local / demo)</th><th>Kubernetes (staging / production)</th></tr></thead>
+      <tbody>
+        <tr><td>Entry point</td><td><code>proxy</code> (nginx) on :8000</td><td>ingress-nginx with cert-manager TLS</td></tr>
+        <tr><td>core-api, ingest-api, fiscal-worker</td><td>One <code>cloud</code> image, <code>FMS_SERVICE</code> picks the role, 2 replicas each</td><td>Same image as Deployments with HPAs; production ingest-api runs 4–40</td></tr>
+        <tr><td>web, analytics</td><td>One container each</td><td>Deployments</td></tr>
+        <tr><td>Database</td><td><code>pg-primary</code> + <code>pg-replica</code> (streaming)</td><td>CloudNativePG cluster across zones, backups via barman-cloud</td></tr>
+        <tr><td>ERB export files</td><td>Inside the worker container</td><td><code>fms-exports</code> ReadWriteMany volume (storage class still to choose)</td></tr>
+        <tr><td>Secrets</td><td><code>.env</code> defaults</td><td>External Secrets Operator</td></tr>
+        <tr><td>Monitoring</td><td><code>observability</code> profile: Prometheus + Grafana</td><td>kube-prometheus-stack, ServiceMonitors and alert rules</td></tr>
+        <tr><td>Station simulation</td><td><code>edge</code> profile (LUS-0001) and <code>fleet</code> profile (200 stations)</td><td>Not deployed; real stations use the kit in <code>deploy/edge/</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The schema comes from <code>db/migrations</code>, applied by the one-off <code>migrate</code> job before the services start, in both environments.</p>
+
+  <footer>Source: <code>deploy/docker-compose.yml</code>, <code>deploy/k8s/</code>, <code>services/</code>. See <code>deploy/README.md</code> for the runbook and <code>docs/DESIGN.md</code> for the design.</footer>
+</main>
+</body>
+</html>
