@@ -21,6 +21,13 @@ configMapGenerator:
       - LOG_LEVEL=info
       - ZRA_VSDC_URL=https://vsdc.example.zra.org.zm
 patches:
+  # ERB exports volume: set a ReadWriteMany storage class for this cluster
+  # (see base/storage/exports-pvc.yaml). Replace the value before the first deploy.
+  - target: { kind: PersistentVolumeClaim, name: fms-exports }
+    patch: |-
+      - op: add
+        path: /spec/storageClassName
+        value: rwx-storage-class   # e.g. efs-sc, azurefile-csi, nfs-client
   - target: { kind: Cluster, name: fms-pg }
     patch: |-
       # Requires >= 3 zones for 3 instances. With only 2 data centres keep

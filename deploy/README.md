@@ -136,6 +136,10 @@ Cluster prerequisites:
 - kube-prometheus-stack (namespace `monitoring`)
 - optionally prometheus-adapter, for `components/custom-metrics-hpa` with the rules in `adapter-rules.example.yaml`
 - a CSI StorageClass `fast-ssd` with volume expansion
+- a **ReadWriteMany** StorageClass (NFS, AWS EFS, Azure Files, CephFS ...) for the `fms-exports` volume, where
+  fiscal-worker writes the ERB daily returns (`EXPORT_DIR=/var/lib/fms/exports`). Set its name in the overlay
+  patch (placeholder `rwx-storage-class`) before the first deploy, or the claim stays `Pending` and the worker
+  pods don't start.
 - a network plugin that enforces NetworkPolicy (Calico or Cilium)
 - nodes labelled `topology.kubernetes.io/zone`
 

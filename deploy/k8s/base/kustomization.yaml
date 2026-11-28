@@ -17,6 +17,7 @@ resources:
   - postgres/cluster.yaml
   - postgres/pooler.yaml
   - postgres/monitoring-queries.yaml
+  - storage/exports-pvc.yaml
   - apps/migrate-job.yaml
   - apps/core-api.yaml
   - apps/ingest-api.yaml
