@@ -306,7 +306,40 @@ def station_pumps(db: Conn, station_id: str) -> list[dict[str, Any]]:
         p["today_amount"] = round_(p["today_amount"] + r["today_amount"], 2)
         p["today_tx"] += r["today_tx"]
         p["nozzles"].append({k: v for k, v in r.items() if k != "pump_no"})
+    _attach_pump_status(db, station_id, pumps)
     return list(pumps.values())
+
+
+# A controller that has not reported for this long is not trusted for live pump state
+# (same threshold as "online" in fms.v_station_health).
+PUMP_STATUS_FRESH = "5 minutes"
+
+
+def _attach_pump_status(db: Conn, station_id: str, pumps: dict[int, dict[str, Any]]) -> None:
+    """status / status_at per pump from the controller's latest UploadStatus (controllers.last_status).
+
+    status is the PTS-2 pump state lower-cased ('idle', 'filling', 'offline', ...), or 'unknown'
+    when no controller reported it in the last PUMP_STATUS_FRESH.
+    """
+    ctrls = db.query(
+        f"""SELECT last_seen_at, last_status, (last_seen_at > now() - interval '{PUMP_STATUS_FRESH}') AS fresh
+              FROM fms.controllers
+             WHERE station_id = $1 AND last_status IS NOT NULL
+             ORDER BY last_seen_at DESC NULLS LAST""",
+        [station_id],
+    )
+    for p in pumps.values():
+        p["status"], p["status_at"] = "unknown", None
+    seen: set[int] = set()
+    for c in ctrls:  # newest controller wins when two report the same pump number
+        entries = c["last_status"].get("Pumps") if isinstance(c["last_status"], dict) else None
+        for e in entries if isinstance(entries, list) else []:
+            no, st = (e.get("Pump"), e.get("Status")) if isinstance(e, dict) else (None, None)
+            if not isinstance(no, int) or no in seen or no not in pumps or not isinstance(st, str):
+                continue
+            seen.add(no)
+            pumps[no]["status_at"] = c["last_seen_at"]
+            pumps[no]["status"] = st.strip().lower() if c["fresh"] else "unknown"
 
 
 # ------------------------------------------------------------ schemas

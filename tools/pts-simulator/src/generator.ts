@@ -54,8 +54,11 @@ export interface ControllerSimOptions {
   startTransactionNo?: number;
   /** Starting totaliser values (litres) per nozzle (default random 100k-900k). */
   startTotalizerL?: number;
-  /** Probability per tick of a random alert record (pump offline etc). */
+  /** Probability per tick that an online pump goes offline (emits PumpOffline). */
   alertProbability?: number;
+  /** A pump that went offline comes back after a random time in [min, max] seconds (default 60..600), emitting PumpOnline. */
+  pumpOutageMinS?: number;
+  pumpOutageMaxS?: number;
   /** Max packets per request. */
   maxPacketsPerRequest?: number;
   /** UTC offset of the controller clock (PTS-2 sends local time without offset). */
@@ -93,6 +96,8 @@ interface PumpState {
   nozzles: NozzleState[];
   busyUntil: number;
   online: boolean;
+  /** When an offline pump comes back online (epoch ms). */
+  offlineUntil: number;
 }
 
 interface TankState {
@@ -186,6 +191,8 @@ export class PtsControllerSim {
       startTransactionNo: options.startTransactionNo ?? 1,
       startTotalizerL: options.startTotalizerL ?? -1,
       alertProbability: options.alertProbability ?? 0.002,
+      pumpOutageMinS: options.pumpOutageMinS ?? 60,
+      pumpOutageMaxS: options.pumpOutageMaxS ?? 600,
       maxPacketsPerRequest: options.maxPacketsPerRequest ?? 50,
       tzOffsetMinutes: options.tzOffsetMinutes ?? 120,
     };
@@ -215,6 +222,7 @@ export class PtsControllerSim {
         nextTransactionNo: this.opts.startTransactionNo,
         busyUntil: 0,
         online: true,
+        offlineUntil: 0,
         nozzles: gradesWithTank.map((g, i) => {
           const tank = this.tanks.find((t) => t.cfg.gradeId === g.id)!;
           const tv = this.opts.startTotalizerL >= 0 ? this.opts.startTotalizerL : round(100000 + this.rng() * 800000);
@@ -318,6 +326,16 @@ export class PtsControllerSim {
     t.lastReportedHeight = h;
     this.enqueue('UploadTankMeasurement', this.measurementData(t, at));
     this.stats.tankMeasurements++;
+  }
+
+  private setPumpOnline(p: PumpState, online: boolean, now: number): void {
+    p.online = online;
+    this.enqueue('UploadAlertRecord', {
+      DateTime: ptsLocalTime(now, this.opts.tzOffsetMinutes),
+      DeviceType: 'Pump', DeviceNumber: p.no, Type: online ? 'PumpOnline' : 'PumpOffline',
+      State: online ? 'Cleared' : 'Active', Message: `Pump ${p.no} ${online ? 'online' : 'offline'}`,
+    });
+    this.stats.alerts++;
   }
 
   private doTransaction(now: number): void {
@@ -425,16 +443,20 @@ export class PtsControllerSim {
     const dtS = this.lastTickAt === null ? 1 : Math.max(0, (now - this.lastTickAt) / 1000);
     this.lastTickAt = now;
 
-    // random pump offline/online events
+    // Pump outages: occasionally an online pump drops offline, and it comes back after a
+    // bounded random time (real dispensers recover from comms/power faults; a pure coin-flip
+    // toggle left pumps offline for hours and could take a whole station dark).
+    for (const p of this.pumps) {
+      if (!p.online && now >= p.offlineUntil) this.setPumpOnline(p, true, now);
+    }
     if (this.rng() < this.opts.alertProbability) {
-      const p = this.pumps[Math.floor(this.rng() * this.pumps.length)];
-      p.online = !p.online;
-      this.enqueue('UploadAlertRecord', {
-        DateTime: ptsLocalTime(now, this.opts.tzOffsetMinutes),
-        DeviceType: 'Pump', DeviceNumber: p.no, Type: p.online ? 'PumpOnline' : 'PumpOffline',
-        State: p.online ? 'Cleared' : 'Active', Message: `Pump ${p.no} ${p.online ? 'online' : 'offline'}`,
-      });
-      this.stats.alerts++;
+      const online = this.pumps.filter((p) => p.online);
+      if (online.length) {
+        const p = online[Math.floor(this.rng() * online.length)];
+        const { pumpOutageMinS: lo, pumpOutageMaxS: hi } = this.opts;
+        p.offlineUntil = now + (lo + this.rng() * Math.max(0, hi - lo)) * 1000;
+        this.setPumpOnline(p, false, now);
+      }
     }
 
     const n = this.poisson(this.opts.rate * dtS);

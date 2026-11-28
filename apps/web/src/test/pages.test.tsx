@@ -125,6 +125,8 @@ describe('pages with MSW mocks', () => {
     const stations = await api.stations();
     wrap(<PumpsTab stationId={stations[0].id} refetchInterval={0} />);
     const pump1 = await screen.findByRole('article', { name: 'Pump 1' });
+    expect(within(pump1).getByText('Idle')).toBeInTheDocument();
+    expect(within(await screen.findByRole('article', { name: 'Pump 2' })).getByText('Offline')).toBeInTheDocument();
     expect(within(pump1).getByRole('img', { name: /Pump 1 with \d nozzles?/ })).toBeInTheDocument();
     const totals = within(pump1).getByRole('table', { name: 'Pump 1 totalizers' });
     expect(within(totals).getByText('Volume totalizer')).toBeInTheDocument();
