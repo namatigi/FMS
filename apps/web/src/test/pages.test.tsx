@@ -14,6 +14,7 @@ import Dashboard from '../pages/owner/Dashboard';
 import Login from '../pages/Login';
 import Compliance from '../pages/erb/Compliance';
 import { ProvinceStations } from '../pages/erb/Provinces';
+import PumpsTab from '../pages/station/PumpsTab';
 import App from '../App';
 
 const server = setupServer(...handlers);
@@ -117,5 +118,17 @@ describe('pages with MSW mocks', () => {
     const name = within(table).getByRole('link', { name: 'Copper Fuels Ndola Broadway' });
     expect(code.getAttribute('href')).toMatch(/^\/stations\/[^/]+$/);
     expect(name.getAttribute('href')).toBe(code.getAttribute('href'));
+  });
+
+  it('pumps tab shows each pump with its number and nozzle totalizers', async () => {
+    await loginAs('owner@zambezi.local');
+    const stations = await api.stations();
+    wrap(<PumpsTab stationId={stations[0].id} refetchInterval={0} />);
+    const pump1 = await screen.findByRole('article', { name: 'Pump 1' });
+    expect(within(pump1).getByRole('img', { name: /Pump 1 with \d nozzles?/ })).toBeInTheDocument();
+    const totals = within(pump1).getByRole('table', { name: 'Pump 1 totalizers' });
+    expect(within(totals).getByText('Volume totalizer')).toBeInTheDocument();
+    expect(within(totals).getAllByText(/^[\d,]+\.\d{2} L$/).length).toBeGreaterThan(0);
+    expect(within(totals).getAllByText(/^K [\d,]+\.\d{2}$/).length).toBeGreaterThan(0);
   });
 });

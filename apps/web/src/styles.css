@@ -997,6 +997,114 @@ textarea {
   margin-right: 4px;
 }
 
+/* ---- pumps ---- */
+.pump-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 14px;
+}
+.pump {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 10px;
+}
+.pump-head,
+.pump-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pump-head-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.pump-body {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 14px;
+  align-items: start;
+}
+.pump-detail {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.pump-art {
+  width: 84px;
+  height: auto;
+}
+.pump-art-cap {
+  fill: var(--accent);
+}
+.pump-art-body {
+  fill: var(--surface-2);
+  stroke: var(--border);
+  stroke-width: 2;
+}
+.pump-art-screen {
+  fill: #0f172a;
+}
+.pump-art-number {
+  fill: #fbbf24;
+  font: 700 20px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.pump-art-nozzle {
+  fill: var(--muted);
+  font: 600 10px system-ui, sans-serif;
+}
+.pump-art-hose {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.pump-art-base {
+  fill: var(--border);
+}
+.pump-totals {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+.pump-totals th {
+  color: var(--muted);
+  font-weight: 600;
+  text-align: left;
+  padding: 2px 6px 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.pump-totals td {
+  padding: 4px 6px 4px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.pump-totals .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@media (max-width: 520px) {
+  .pump-grid {
+    grid-template-columns: 1fr;
+  }
+  .pump-body {
+    grid-template-columns: 1fr;
+  }
+  .pump-art {
+    width: 64px;
+  }
+  .pump-detail {
+    overflow-x: auto;
+  }
+}
+
 /* ---- tanks ---- */
 .tank-grid {
   display: grid;

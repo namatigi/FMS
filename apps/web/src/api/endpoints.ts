@@ -2,7 +2,7 @@ import { asItems, request, type Query } from './client';
 import type {
   AiModel, Alert, AuthResponse, CapPrice, Compliance, DashboardOverview, Delivery, DemandForecast, FiscalReceipt,
   NationalReserve, Page, PricingResult, ProvinceDailyRow, ReconRow, RegOverview, RegProvince, RegProvinceStation,
-  SalesBucket, Station, StationDetail, StockoutRow, Tank, Transaction, User, Anomaly,
+  Pump, SalesBucket, Station, StationDetail, StockoutRow, Tank, Transaction, User, Anomaly,
 } from '../types';
 
 const a = (path: string, query?: Query) => request(path, { service: 'analytics', query });
@@ -27,6 +27,7 @@ export const api = {
   stations: async (query?: Query) => asItems<Station>(await request('/stations', { query })),
   station: (id: string) => request<StationDetail>(`/stations/${id}`),
   tanks: async (id: string) => asItems<Tank>(await request(`/stations/${id}/tanks`), 'tanks'),
+  pumps: async (id: string) => asItems<Pump>(await request(`/stations/${id}/pumps`)),
   transactions: (id: string, query?: Query) => request<Page<Transaction>>(`/stations/${id}/transactions`, { query }),
   salesSummary: async (id: string, query: Query) =>
     asItems<SalesBucket>(await request(`/stations/${id}/sales/summary`, { query })),

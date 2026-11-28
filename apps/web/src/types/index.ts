@@ -126,6 +126,34 @@ export interface Tank {
   days_of_cover: number | null;
 }
 
+export interface PumpNozzle {
+  nozzle_no: number;
+  /** false when the pump/nozzle sold fuel but is missing from the station's nozzle configuration */
+  configured: boolean;
+  pts_grade_id: number | null;
+  grade_name: string | null;
+  product_code: string | null;
+  tank_no: number | null;
+  price: number | null;
+  /** Non-resettable electronic totalisers reported with the nozzle's latest sale. */
+  total_volume_l: number | null;
+  total_amount: number | null;
+  last_sale_at: string | null;
+  today_volume_l: number;
+  today_amount: number;
+  today_tx: number;
+}
+
+export interface Pump {
+  pump_no: number;
+  configured: boolean;
+  last_sale_at: string | null;
+  today_volume_l: number;
+  today_amount: number;
+  today_tx: number;
+  nozzles: PumpNozzle[];
+}
+
 export interface FuelGrade {
   id?: string;
   pts_grade_id: number;

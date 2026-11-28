@@ -33,6 +33,31 @@ def test_tanks_include_days_of_cover(core_client, T):
     assert t1["days_of_cover"] == 2.5
 
 
+def test_pumps_show_latest_totalisers_and_unconfigured_pumps(core_client, T, db):
+    # Latest sale on pump 1 / nozzle 1 carries the totalisers; pump 9 is not in fms.nozzles.
+    db.execute(
+        """INSERT INTO fms.pump_transactions (station_id, pts_id, pts_transaction_no, pump_no, nozzle_no, pts_grade_id, product_code,
+                                              tank_no, ended_at, volume_l, price, amount, total_volume_l, total_amount)
+           VALUES ($1, 'TEST-PUMPS', 9001, 1, 1, 1, 'PETROL', 1, now(), 10, 31.85, 318.5, 123456.789, 3932098.65),
+                  ($1, 'TEST-PUMPS', 9002, 9, 2, 2, 'DIESEL', 2, now() - interval '1 minute', 5, 29.95, 149.75, 777.5, 23286.13)""",
+        [ST["LUS"]],
+    )
+    try:
+        r = get(core_client, T["owner"], f"/api/v1/stations/{ST['LUS']}/pumps")
+    finally:  # other tests in this module count the seeded sales exactly
+        db.execute("DELETE FROM fms.pump_transactions WHERE pts_id = 'TEST-PUMPS'")
+    assert r.status_code == 200
+    pumps = {p["pump_no"]: p for p in r.json()}
+    assert {1, 2, 9} <= set(pumps)
+    p1n1 = next(n for n in pumps[1]["nozzles"] if n["nozzle_no"] == 1)
+    assert p1n1["total_volume_l"] == 123456.789 and p1n1["total_amount"] == 3932098.65
+    assert p1n1["configured"] is True and p1n1["grade_name"] == "Unleaded Petrol" and p1n1["tank_no"] == 1
+    assert pumps[1]["today_tx"] > 0 and pumps[1]["today_volume_l"] > 0
+    assert pumps[9]["configured"] is False and pumps[9]["nozzles"][0]["total_volume_l"] == 777.5
+    # scoped like every station route
+    assert get(core_client, T["owner"], f"/api/v1/stations/{ST['SOU']}/pumps").status_code == 404
+
+
 def test_transactions_keyset_pagination(core_client, T):
     seen: set[int] = set()
     cursor = None
