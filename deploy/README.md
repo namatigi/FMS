@@ -13,7 +13,7 @@ This runbook covers how the National Fuel Monitoring System is packaged, run, sc
 | `k8s/base`, `k8s/overlays/{staging,production}`, `k8s/components/custom-metrics-hpa`, `k8s/dr` | Production Kubernetes (Kustomize, CloudNativePG) |
 | `edge/` | Station installation kit: compose, systemd, keepalived, update, commissioning |
 | `../.github/workflows/ci.yml` | CI: tests, image build, Trivy, GHCR push, cosign |
-| `../Makefile` | `make up / down / logs / migrate / seed / test / build-images / sim` |
+| `../Makefile` | `make up / down / logs / migrate / seed / test / build-images / sim / sim-fleet` |
 
 ## 1. Topology
 
@@ -66,6 +66,7 @@ flowchart LR
 | Cloud services | `core-api` ×2, `ingest-api` ×2, `fiscal-worker` ×2, `analytics`, `web`, `mock-vsdc` |
 | Proxy | `proxy` (nginx: `/api` `/ingest` `/analytics` `/`) |
 | `edge` profile | `edge-db`, `edge-gateway` (LUS-0001), `pts-simulator` |
+| `fleet` profile | `pts-fleet`: 200 simulated direct-mode controllers posting to `ingest-api` |
 | `observability` profile | `postgres-exporter`, `prometheus`, `grafana` |
 
 ## 2. Running locally
@@ -77,10 +78,22 @@ cp deploy/.env.example deploy/.env      # optional; defaults are built in
 make up                                 # core stack -> http://localhost:8000
 make up-all                             # + edge station + Prometheus/Grafana
 make sim                                # edge gateway + PTS-2 simulator, follow logs
+make sim-fleet                          # + 200 simulated stations (dev only), see tools/pts-simulator/README.md
+make sim-fleet-stop                     # stop them (the stations stay in the database)
 make logs SERVICE=ingest-api
 make migrate | make seed                # schema only | schema + demo seed
 make down | make clean                  # stop | stop and wipe volumes
 ```
+
+**Django cloud services.** `services/cloud` is a Django implementation of core-api, ingest-api and
+fiscal-worker with the same contracts. Add the override file to run it in place of the TypeScript services
+(same service names, ports and database; the proxy, web app, edge gateway and analytics are unchanged):
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.django.yml up -d --build
+```
+
+Leave `-f deploy/docker-compose.django.yml` out to go back to the TypeScript services.
 
 | URL | What |
 |---|---|

@@ -175,6 +175,41 @@ jobs:
           if [ $rc -eq 5 ]; then echo "::warning::no analytics tests collected"; exit 0; fi
           exit $rc
 
+  # ------------------------------------------------------------------ cloud services on Django (Python)
+  cloud:
+    name: services/cloud (Django)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fms
+          POSTGRES_PASSWORD: fms
+          POSTGRES_DB: fms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fms -d fms"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      # The tests create and seed their own databases from db/migrations.
+      TEST_PG_ADMIN_URL: postgres://fms:fms@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/cloud/requirements*.txt
+      - name: Install
+        working-directory: services/cloud
+        run: python -m pip install --upgrade pip && pip install -r requirements-dev.txt
+      - name: Lint
+        working-directory: services/cloud
+        run: ruff check fms_cloud tests && ruff format --check fms_cloud tests
+      - name: pytest
+        working-directory: services/cloud
+        run: pytest -q
+
   # ------------------------------------------------------------------ web
   web:
     name: apps/web
@@ -246,7 +281,7 @@ jobs:
   # ------------------------------------------------------------------ images
   images:
     name: image ${{ matrix.name }}
-    needs: [node, analytics, web]
+    needs: [node, analytics, cloud, web]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -262,6 +297,7 @@ jobs:
           - { name: fiscal-worker, context: .,                  dockerfile: services/fiscal-worker/Dockerfile }
           - { name: edge-gateway,  context: .,                  dockerfile: services/edge-gateway/Dockerfile }
           - { name: analytics,     context: services/analytics, dockerfile: services/analytics/Dockerfile }
+          - { name: cloud,         context: services/cloud,     dockerfile: services/cloud/Dockerfile }
           - { name: web,           context: apps/web,           dockerfile: apps/web/Dockerfile }
           - { name: migrate,       context: .,                  dockerfile: deploy/migrate/Dockerfile }
           - { name: pts-simulator, context: .,                  dockerfile: deploy/pts-simulator/Dockerfile }

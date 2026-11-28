@@ -43,6 +43,27 @@ The `--station-map` file is a JSON array:
 ]
 ```
 
+## 200-station fleet (load test and demo)
+
+`make sim-fleet` loads [fleet/stations-200.sql](fleet/stations-200.sql) into the running stack and starts the
+`pts-fleet` compose service (profile `fleet`). The SQL adds 200 direct-mode stations across all ten
+provinces, weighted roughly by population (Lusaka 50, Copperbelt 40, Central, Eastern and Southern 20 each,
+the rest 10 each), owned by five companies. Each has one signed controller (secret `devsecret-sim`), two
+tanks and two pumps with two nozzles, matching the demo seed. The script is idempotent and is never applied
+by `migrate --seed`. Dev only: do not load it into a real database.
+
+`pts-fleet` uploads straight to `ingest-api`, so these stations bypass the edge gateway and print no ZRA
+receipts. Defaults: 0.02 transactions per second per station (nominally 4 a second in total), status every 30 s,
+fault injection on. Set `FLEET_RATE`, `FLEET_SIZE` (at most 200, the stations the SQL creates) or
+`FLEET_EXTRA_ARGS` in the environment to change them. `make sim-fleet-stop` stops the simulator; the stations stay and show as offline after 5 minutes.
+
+Without make (PowerShell, from the repo root):
+
+```powershell
+Get-Content tools/pts-simulator/fleet/stations-200.sql | docker compose -f deploy/docker-compose.yml exec -T pg-primary sh -c 'psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+docker compose -f deploy/docker-compose.yml --profile fleet up -d pts-fleet
+```
+
 ## Library (tests and load tests)
 
 ```ts

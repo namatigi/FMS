@@ -9,7 +9,11 @@
  * Prereqs: all services built (dist/), analytics venv at services/analytics/.venv,
  * a Postgres you can create databases on (PG_ADMIN_URL, default postgres://postgres@localhost:55432).
  *
- *   node tools/e2e/e2e.mjs [--duration 45]
+ *   node tools/e2e/e2e.mjs [--duration 45] [--impl ts|django]
+ *
+ * --impl django (or E2E_IMPL=django) runs ingest-api, core-api and fiscal-worker from
+ * the Django implementation in services/cloud (venv at services/cloud/.venv) instead
+ * of the TypeScript builds. Everything else, and every check, stays the same.
  */
 import { spawn } from 'node:child_process';
 import { mkdirSync, createWriteStream, existsSync } from 'node:fs';
@@ -22,7 +26,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const ADMIN = process.env.PG_ADMIN_URL ?? 'postgres://postgres@localhost:55432';
 const CLOUD_DB = `${ADMIN}/fms_e2e`;
 const EDGE_DB = `${ADMIN}/fms_e2e_edge`;
-const DURATION = Number(process.argv[process.argv.indexOf('--duration') + 1] || 40);
+const DURATION = process.argv.includes('--duration') ? Number(process.argv[process.argv.indexOf('--duration') + 1]) : 40;
+if (!Number.isFinite(DURATION) || DURATION <= 0) throw new Error('--duration must be a positive number of seconds');
+const IMPL = (process.argv.includes('--impl') ? process.argv[process.argv.indexOf('--impl') + 1] : process.env.E2E_IMPL) || 'ts';
+if (!['ts', 'django'].includes(IMPL)) throw new Error(`--impl must be ts or django (got ${IMPL})`);
 const LOGS = process.env.E2E_LOG_DIR ?? join(ROOT, 'tools/e2e/logs');
 const JWT_SECRET = 'e2e-jwt-secret-please-change-0123456789';
 const P = { vsdc: 28200, ingest: 28081, core: 28080, worker: 29464, edgePts: 28100, edgeUi: 28101, analytics: 28090 };
@@ -94,12 +101,29 @@ async function main() {
   const node = process.execPath;
   const common = { DATABASE_URL: CLOUD_DB, JWT_SECRET, LOG_LEVEL: 'info', NODE_ENV: 'production' };
   start('mock-vsdc', node, ['packages/zra-client/bin/mock-vsdc.js'], { PORT: P.vsdc });
-  start('ingest-api', node, ['services/ingest-api/dist/server.js'], { ...common, PORT: P.ingest, RATE_LIMIT_RPS: 0 });
-  start('core-api', node, ['services/core-api/dist/server.js'], { ...common, PORT: P.core });
-  start('fiscal-worker', node, ['services/fiscal-worker/dist/main.js'], {
+  const workerEnv = {
     ...common, METRICS_PORT: P.worker, ZRA_VSDC_URL: `http://localhost:${P.vsdc}`, WORKER_POLL_INTERVAL_MS: 500,
     SCHEDULER_TICK_MS: 5000, FISCAL_SWEEP_INTERVAL_MS: 10000, EXPORT_DIR: join(LOGS, 'exports'),
-  });
+  };
+  console.log(`   cloud services: ${IMPL === 'django' ? 'Django (services/cloud)' : 'TypeScript'}`);
+  if (IMPL === 'django') {
+    const cloud = join(ROOT, 'services/cloud');
+    const dpy = join(cloud, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+    if (!existsSync(dpy)) throw new Error(`no Django venv at ${dpy}`);
+    const dj = { ...common, PYTHONUNBUFFERED: '1', DJANGO_SETTINGS_MODULE: 'fms_cloud.settings' };
+    await new Promise((res, rej) => {
+      const c = spawn(dpy, ['manage.py', 'fms_core_migrate'], { cwd: cloud, env: { ...process.env, ...dj, FMS_SERVICE: 'core' }, stdio: 'inherit' });
+      c.on('exit', (code) => (code === 0 ? res() : rej(new Error(`fms_core_migrate exited ${code}`))));
+    });
+    // runserver is Django's threaded development server: fine for a single-machine test.
+    start('ingest-api', dpy, ['manage.py', 'runserver', `127.0.0.1:${P.ingest}`, '--noreload'], { ...dj, FMS_SERVICE: 'ingest', RATE_LIMIT_RPS: 0 }, cloud);
+    start('core-api', dpy, ['manage.py', 'runserver', `127.0.0.1:${P.core}`, '--noreload'], { ...dj, FMS_SERVICE: 'core' }, cloud);
+    start('fiscal-worker', dpy, ['manage.py', 'fms_worker'], { ...workerEnv, ...dj, FMS_SERVICE: 'worker' }, cloud);
+  } else {
+    start('ingest-api', node, ['services/ingest-api/dist/server.js'], { ...common, PORT: P.ingest, RATE_LIMIT_RPS: 0 });
+    start('core-api', node, ['services/core-api/dist/server.js'], { ...common, PORT: P.core });
+    start('fiscal-worker', node, ['services/fiscal-worker/dist/main.js'], workerEnv);
+  }
   start('edge-gateway', node, ['services/edge-gateway/dist/main.js'], {
     DATABASE_URL: EDGE_DB, LOG_LEVEL: 'info', EDGE_PTS_PORT: P.edgePts, EDGE_UI_PORT: P.edgeUi,
     STATION_CODE: 'LUS-0001', STATION_NAME: 'Zambezi Cairo Road', GATEWAY_CODE: 'GW-LUS-0001',
@@ -149,6 +173,12 @@ async function main() {
   for (let i = 0; i < 60; i++) {
     const r = (await cloud.query(`SELECT status FROM fms.edge_commands WHERE id = $1`, [priceOk.json.command_id])).rows[0];
     if (r && !['queued', 'delivered'].includes(r.status)) break;
+    await sleep(1000);
+  }
+  // The command round trip queues new outbox records at the edge (its ack, late receipts):
+  // let them sync before the outbox is asserted empty.
+  for (let i = 0; i < 15; i++) {
+    if ((await edge.query(`SELECT count(*)::int n FROM edge.outbox WHERE sent_at IS NULL`)).rows[0].n === 0) break;
     await sleep(1000);
   }
   await cloud.query(`SELECT fms.rollup_station_day(id, (now() AT TIME ZONE 'Africa/Lusaka')::date) FROM fms.stations`);
