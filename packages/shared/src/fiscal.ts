@@ -1,7 +1,7 @@
 /**
  * Fiscalisation contracts (ZRA Smart Invoice / VSDC) and fiscal printing.
  * Implemented by packages/zra-client (ZraVsdcClient) and packages/fiscal-printer.
- * Consumed by services/edge-gateway (primary path) and services/fiscal-worker
+ * Consumed by services/edge-gateway (primary path); the cloud fiscal-worker (services/cloud) mirrors it in Python
  * (cloud fallback for direct-mode stations / edge-failed receipts).
  */
 

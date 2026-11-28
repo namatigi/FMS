@@ -53,9 +53,6 @@ jobs:
         path:
           - packages/zra-client
           - packages/fiscal-printer
-          - services/core-api
-          - services/ingest-api
-          - services/fiscal-worker
           - services/edge-gateway
           - tools/pts-simulator
     services:
@@ -292,9 +289,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: core-api,      context: .,                  dockerfile: services/core-api/Dockerfile }
-          - { name: ingest-api,    context: .,                  dockerfile: services/ingest-api/Dockerfile }
-          - { name: fiscal-worker, context: .,                  dockerfile: services/fiscal-worker/Dockerfile }
           - { name: edge-gateway,  context: .,                  dockerfile: services/edge-gateway/Dockerfile }
           - { name: analytics,     context: services/analytics, dockerfile: services/analytics/Dockerfile }
           - { name: cloud,         context: services/cloud,     dockerfile: services/cloud/Dockerfile }

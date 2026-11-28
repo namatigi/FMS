@@ -7,9 +7,7 @@ resources:
   - ../../base
 # Base maps the fms/<name> placeholders to ghcr.io/oxoafrica/fms/<name>; overlays match on that.
 images:
-  - { name: ghcr.io/oxoafrica/fms/core-api, newTag: main }
-  - { name: ghcr.io/oxoafrica/fms/ingest-api, newTag: main }
-  - { name: ghcr.io/oxoafrica/fms/fiscal-worker, newTag: main }
+  - { name: ghcr.io/oxoafrica/fms/cloud, newTag: main }
   - { name: ghcr.io/oxoafrica/fms/analytics, newTag: main }
   - { name: ghcr.io/oxoafrica/fms/web, newTag: main }
   - { name: ghcr.io/oxoafrica/fms/migrate, newTag: main }

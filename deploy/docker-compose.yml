@@ -36,6 +36,17 @@ x-node-health: &node-health
   retries: 6
   start_period: 30s
 
+# Python HTTP probe for the Django image (no curl/wget in python:slim).
+x-py-health: &py-health
+  interval: 10s
+  timeout: 5s
+  retries: 6
+  start_period: 30s
+
+x-cloud-image: &cloud-image
+  build: { context: ../services/cloud, dockerfile: Dockerfile }
+  image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/cloud:${TAG:-dev}
+
 x-app-depends: &app-depends
   pg-primary: { condition: service_healthy }
   migrate: { condition: service_completed_successfully }
@@ -119,60 +130,61 @@ services:
     logging: *logging
 
   # ---------------------------------------------------------------- cloud services
+  # core-api, ingest-api and fiscal-worker run from one Django image (services/cloud);
+  # FMS_SERVICE picks the role.
   core-api:
-    build: { context: .., dockerfile: services/core-api/Dockerfile }
-    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/core-api:${TAG:-dev}
+    <<: *cloud-image
     deploy: { replicas: 2 }
     restart: unless-stopped
     environment:
       <<: *app-env
+      FMS_SERVICE: core
       PORT: "8080"
     depends_on:
       <<: *app-depends
       pg-replica: { condition: service_healthy }
     healthcheck:
-      <<: *node-health
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      <<: *py-health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=3)"]
     logging: *logging
 
   ingest-api:
-    build: { context: .., dockerfile: services/ingest-api/Dockerfile }
-    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/ingest-api:${TAG:-dev}
+    <<: *cloud-image
     deploy: { replicas: 2 }
     restart: unless-stopped
     environment:
       <<: *app-env
+      FMS_SERVICE: ingest
       PORT: "8081"
     depends_on: *app-depends
     healthcheck:
-      <<: *node-health
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      <<: *py-health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/readyz', timeout=3)"]
     logging: *logging
 
   fiscal-worker:
-    build: { context: .., dockerfile: services/fiscal-worker/Dockerfile }
-    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/fiscal-worker:${TAG:-dev}
+    <<: *cloud-image
     deploy: { replicas: 2 }
     restart: unless-stopped
     environment:
       <<: [*app-env, *zra-env]
-      PORT: "9464"
+      FMS_SERVICE: worker
       METRICS_PORT: "9464"
     depends_on:
       <<: *app-depends
       mock-vsdc: { condition: service_healthy }
     healthcheck:
-      <<: *node-health
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9464/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      <<: *py-health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9464/healthz', timeout=3)"]
     logging: *logging
 
   mock-vsdc:
-    # Same image family as fiscal-worker; packages/zra-client ships the mock
-    # VSDC CLI. ASSUMPTION: the fiscal-worker image contains /app/packages/zra-client.
-    build: { context: .., dockerfile: services/fiscal-worker/Dockerfile }
-    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/fiscal-worker:${TAG:-dev}
+    # Test double for ZRA VSDC. packages/zra-client ships it as a CLI, and the
+    # edge-gateway image already contains that package.
+    build: { context: .., dockerfile: services/edge-gateway/Dockerfile }
+    image: ${REGISTRY:-ghcr.io/oxoafrica/fms}/edge-gateway:${TAG:-dev}
     entrypoint: ["node"]
-    command: ["/app/packages/zra-client/bin/mock-vsdc.js"]
+    command: ["/repo/packages/zra-client/bin/mock-vsdc.js"]
     restart: unless-stopped
     environment:
       PORT: "8200"
