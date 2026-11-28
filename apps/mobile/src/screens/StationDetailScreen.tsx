@@ -3,6 +3,7 @@ import React from 'react';
 import { View } from 'react-native';
 import {
   useDeliveries,
+  usePumps,
   useStation,
   useStockout,
   useTanks,
@@ -10,7 +11,7 @@ import {
   useTodayTransactions,
 } from '../api/queries';
 import type { FiscalStatus, SalesSummaryRow } from '../api/types';
-import { HBarChart, TankCard } from '../components/charts';
+import { HBarChart, PumpCard, TankCard } from '../components/charts';
 import { Badge, Card, Dot, Empty, ErrorBox, KV, Loading, OfflineBanner, Row, Screen, Section, T } from '../components/ui';
 import {
   formatDateTime,
@@ -53,6 +54,7 @@ function aggregate(rows: SalesSummaryRow[], keyOf: (r: SalesSummaryRow) => strin
 export default function StationDetailScreen({ id }: { id: string }) {
   const t = useTheme();
   const station = useStation(id);
+  const pumps = usePumps(id);
   const tanks = useTanks(id);
   const byProduct = useTodaySales(id, 'product');
   const byPump = useTodaySales(id, 'pump');
@@ -61,7 +63,7 @@ export default function StationDetailScreen({ id }: { id: string }) {
   const stockout = useStockout(id);
 
   const s = station.data;
-  const all = [station, tanks, byProduct, byPump, txs, deliveries];
+  const all = [station, pumps, tanks, byProduct, byPump, txs, deliveries];
   const refreshing = all.some((q) => q.isRefetching);
   const anyFailedWithData = all.some((q) => q.isError && q.data);
   const updatedAt = Math.max(...all.map((q) => q.dataUpdatedAt || 0)) || undefined;
@@ -94,6 +96,18 @@ export default function StationDetailScreen({ id }: { id: string }) {
           ) : null}
         </Card>
       ) : null}
+
+      <Section title="Pumps">
+        {pumps.isPending ? <Loading /> : null}
+        {pumps.isError && !pumps.data ? <Empty text="Pump data unavailable." /> : null}
+        {pumps.data && pumps.data.length === 0 ? <Empty text="No pump has reported a sale yet." /> : null}
+        {[...(pumps.data ?? [])]
+          .sort((a, b) => a.pump_no - b.pump_no)
+          .map((p) => (
+            <PumpCard key={p.pump_no} pump={p} testID={`pump-${p.pump_no}`} />
+          ))}
+        <T variant="small">Totalizers as reported with each nozzle&apos;s latest sale.</T>
+      </Section>
 
       <Section title="Tanks">
         {tanks.isPending && !s ? <Loading /> : null}
